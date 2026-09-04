@@ -5,7 +5,25 @@
 // image's raw bytes) is sent straight to the local Rust engine's JSON-HTTP
 // shim (see docs/ARCHITECTURE.md #4) and lives there, not in the browser.
 
-const ENGINE_BASE = "http://127.0.0.1:51423"; // resolved from the engine's lockfile at build/launch time
+// Same origin works when the engine itself serves this page (Local mode,
+// the normal case). When this page is instead served from Render (Cloud
+// mode — see docs/ARCHITECTURE.md), /api/status there reports mode:
+// "cloud", and we fall back to a locally-installed engine on the visitor's
+// own machine at the fixed dev/default HTTP port.
+const LOCAL_FALLBACK_BASE = "http://127.0.0.1:51424";
+let ENGINE_BASE = "";
+
+async function resolveEngineBase() {
+  try {
+    const res = await fetch(`${ENGINE_BASE}/api/status`);
+    const data = await res.json();
+    if (data.mode === "cloud") {
+      ENGINE_BASE = LOCAL_FALLBACK_BASE;
+    }
+  } catch {
+    ENGINE_BASE = LOCAL_FALLBACK_BASE;
+  }
+}
 
 const state = {
   scope: "all",
@@ -169,6 +187,11 @@ function setStatus(healthy, text) {
 
 // ---------- helpers ----------
 
+async function init() {
+  await resolveEngineBase();
+  pollStatus();
+}
+
 function basename(path) {
   return path.split(/[\\/]/).pop();
 }
@@ -183,4 +206,4 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-pollStatus();
+init();

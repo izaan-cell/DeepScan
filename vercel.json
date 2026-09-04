@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapis.vercel.sh/vercel.json",
+  "outputDirectory": "frontend",
+  "cleanUrls": true
+}

@@ -1,0 +1,11 @@
+<resources>
+    <!-- Strict black-and-white, matching frontend/style.css design tokens. -->
+    <style name="Theme.DeepScan" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/ink</item>
+        <item name="colorOnPrimary">@color/paper</item>
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="colorOnBackground">@color/ink</item>
+        <item name="colorSurface">@color/paper</item>
+        <item name="colorOnSurface">@color/ink</item>
+    </style>
+</resources>

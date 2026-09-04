@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX v5 source for the DeepScan MSI. Built by .github/workflows/release.yml
+  on windows-latest via `wix build` (WiX v3's candle/light have no Windows-only
+  requirement either, but v5's `Files Include` globbing lets one entry pull in
+  the whole frontend/ tree instead of listing every file by hand).
+
+  Expects a staging directory laid out by that same workflow:
+    stage/bin/deepscan-engine.exe
+    stage/bin/deepscan-daemon.exe
+    stage/launcher.ps1
+    stage/frontend/**
+    stage/lib/deepscan-parser.jar   (optional — only if java-parser was built)
+    stage/jre/**                    (optional — only if a JRE was bundled)
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      name="DeepScan"
+      manufacturer="DeepScan"
+      version="$(var.Version)"
+      upgradeCode="8f2c9b1a-6e4d-4a3b-9c7e-2d1a5b8f4c6e">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of DeepScan is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="Main" Title="DeepScan" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DeepScan">
+        <Files Include="stage\**" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="3a7d5e9c-1b2f-4c8a-9d6e-5f0a3b7c8e1d">
+        <Shortcut
+            Id="DeepScanShortcut"
+            Name="DeepScan"
+            Target="[INSTALLFOLDER]launcher.ps1"
+            WorkingDirectory="INSTALLFOLDER" />
+        <!-- No custom icon yet — falls back to launcher.ps1's default.
+             Add packaging/windows/DeepScan.ico and an <Icon>/Icon="..."
+             reference here once real app-icon assets exist. -->
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\DeepScan"
+            Name="Installed"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Package>
+</Wix>

@@ -9,15 +9,21 @@ go-daemon/*.exe
 java-parser/target/
 *.class
 
-# Generated protobuf code
-**/pb/
-**/gen/
+# Generated protobuf code — Go stubs are committed (idiomatic for Go
+# modules); Java stubs are generated at build time by protobuf-maven-plugin
+# into java-parser/target/, already covered below.
 
-# Local runtime data (models, LanceDB, IPC lockfiles) — never committed
+# Local runtime data (models, LanceDB, IPC lockfiles, dev data dir) — never committed
 .deepscan/
+.deepscan-dev/
 *.onnx
 engine.lock
 parser.lock
+
+# Environment — .env.example and .env.dev are committed (no secrets);
+# personal overrides are not.
+.env
+.env.local
 
 # OS
 .DS_Store

@@ -217,3 +217,33 @@ depending on whether the query is an image or a text/code string.
    Every input the user provides — pasted text, a code snippet, a dropped image's raw bytes —
    is sent straight to the engine over `/api/search` and persisted there (LanceDB row +
    on-disk snippet/thumbnail cache under `~/.deepscan/cache/`), never held client-side only.
+
+## 5. Deploying the UI shell to Vercel
+
+DeepScan's whole premise is local search — a hosted container has no access to a visitor's
+Documents folder, so it can never do real indexing/search itself. What a public host *can*
+usefully do is serve the frontend shell, so the app has one stable URL instead of everyone
+opening a local file. Since that shell is genuinely static (`frontend/index.html` + `.css`
++ `.js`, no build step), it doesn't need a persistent backend process at all — Vercel serves
+it directly as static files (see `vercel.json`, `outputDirectory: "frontend"`), which is a
+better fit than a free-tier Render web service (0.1 vCPU) that would sit mostly idle running
+a Rust binary just to hand back static assets.
+
+The frontend (`frontend/app.js`) already handles having no backend at this origin: it tries
+`/api/status` on load, and on a plain static host that 404s (or the fetch fails outright),
+so it falls back to `http://127.0.0.1:51424` — a locally-installed engine running on the
+visitor's own machine. Chrome will prompt the user to allow the page to reach a
+private-network address the first time (Private Network Access) — that prompt is expected,
+not a bug.
+
+`rust-engine` still has a `config::Mode::Cloud` code path (skips loading
+models/DB/gRPC, serves the same static files + a `/api/status` reporting
+`mode: "cloud"`) — not used by the Vercel deploy, but kept because it lets the exact same
+binary be self-hosted on any plain server if that's ever preferable to Vercel.
+
+A **Chrome extension or installed PWA cannot replace this.** Browser sandboxing has no API
+for recursive background directory watching across arbitrary folders, no persistent
+filesystem access without re-prompting, and no way to hook Finder/Explorer context menus —
+the File System Access API (`showDirectoryPicker()`) only grants one folder at a time, for
+the current session. The Go daemon's `fsnotify` watch + system tray + native OS hooks stay
+a real installed background process; nothing in a browser sandbox substitutes for that.

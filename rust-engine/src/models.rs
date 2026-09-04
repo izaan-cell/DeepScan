@@ -1,52 +1,157 @@
-//! Loads the three local ONNX models into memory once at startup and exposes
-//! a small typed API over them. All inference is local — no network calls.
+//! Loads the three local ONNX models into memory once at startup and
+//! exposes a small typed embedding API over them. All inference is
+//! local — no network calls once the models are on disk.
+//!
+//! Model files are NOT bundled with this repo (multi-hundred-MB ONNX
+//! exports don't belong in git). Place them under
+//! `$DEEPSCAN_DATA_DIR/models/` before starting the engine:
+//!   - clip-vit-b32.onnx            (+ CLIP's tokenizer.json, if adding text-side CLIP later)
+//!   - all-MiniLM-L6-v2.onnx        + all-MiniLM-L6-v2.tokenizer.json
+//!   - jina-embeddings-v2-base-code.onnx + jina-code.tokenizer.json
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use ndarray::{Array4, CowArray};
 use ort::session::Session;
+use ort::value::Value;
 use std::path::Path;
+use tokenizers::Tokenizer;
+
+const CLIP_IMAGE_SIZE: u32 = 224;
+// Standard CLIP normalization constants (OpenAI CLIP preprocessing).
+const CLIP_MEAN: [f32; 3] = [0.48145466, 0.4578275, 0.40821073];
+const CLIP_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
 
 pub struct ModelBundle {
-    /// CLIP ViT-B/32 visual tower — images/icons -> 512-d vector.
     pub clip: Session,
-    /// all-MiniLM-L6-v2 — general text/documents -> 384-d vector.
     pub minilm: Session,
-    /// jina-embeddings-v2-base-code — code/scripts -> 384-d vector.
+    pub minilm_tokenizer: Tokenizer,
     pub jina_code: Session,
+    pub jina_tokenizer: Tokenizer,
 }
 
 impl ModelBundle {
     pub fn load(data_dir: &Path) -> Result<Self> {
         let model_dir = data_dir.join("models");
 
-        let clip = Session::builder()?
-            .with_intra_threads(4)?
-            .commit_from_file(model_dir.join("clip-vit-b32.onnx"))?;
+        let load_session = |file: &str| -> Result<Session> {
+            let path = model_dir.join(file);
+            Session::builder()?
+                .with_intra_threads(4)?
+                .commit_from_file(&path)
+                .with_context(|| {
+                    format!(
+                        "failed to load {file} from {}. See rust-engine/src/models.rs for where \
+                         to place ONNX model exports.",
+                        path.display()
+                    )
+                })
+        };
 
-        let minilm = Session::builder()?
-            .with_intra_threads(4)?
-            .commit_from_file(model_dir.join("all-MiniLM-L6-v2.onnx"))?;
+        let load_tokenizer = |file: &str| -> Result<Tokenizer> {
+            let path = model_dir.join(file);
+            Tokenizer::from_file(&path)
+                .map_err(|e| anyhow::anyhow!("failed to load tokenizer {file}: {e}"))
+        };
 
-        let jina_code = Session::builder()?
-            .with_intra_threads(4)?
-            .commit_from_file(model_dir.join("jina-embeddings-v2-base-code.onnx"))?;
-
-        Ok(Self { clip, minilm, jina_code })
+        Ok(Self {
+            clip: load_session("clip-vit-b32.onnx")?,
+            minilm: load_session("all-MiniLM-L6-v2.onnx")?,
+            minilm_tokenizer: load_tokenizer("all-MiniLM-L6-v2.tokenizer.json")?,
+            jina_code: load_session("jina-embeddings-v2-base-code.onnx")?,
+            jina_tokenizer: load_tokenizer("jina-code.tokenizer.json")?,
+        })
     }
 
-    /// Embed a raster image buffer -> 512-d CLIP vector.
-    pub fn embed_image(&self, _rgb_pixels: &[f32], _width: u32, _height: u32) -> Result<Vec<f32>> {
-        // Preprocess (resize 224x224, normalize) then session.run(...).
-        // Scaffold stub — see docs/ARCHITECTURE.md pipeline table.
-        todo!("CLIP preprocessing + ort::Session::run")
+    /// Embed a decoded RGB8 image (already resized to whatever `image` gave
+    /// us) into a 512-d CLIP vector: resize to 224x224, normalize, NCHW.
+    pub fn embed_image(&mut self, img: &image::DynamicImage) -> Result<Vec<f32>> {
+        let resized = img.resize_exact(
+            CLIP_IMAGE_SIZE,
+            CLIP_IMAGE_SIZE,
+            image::imageops::FilterType::Triangle,
+        );
+        let rgb = resized.to_rgb8();
+
+        let mut tensor = Array4::<f32>::zeros((1, 3, CLIP_IMAGE_SIZE as usize, CLIP_IMAGE_SIZE as usize));
+        for (x, y, pixel) in rgb.enumerate_pixels() {
+            for c in 0..3 {
+                let normalized = (pixel[c] as f32 / 255.0 - CLIP_MEAN[c]) / CLIP_STD[c];
+                tensor[[0, c, y as usize, x as usize]] = normalized;
+            }
+        }
+
+        let input = Value::from_array(tensor)?;
+        let outputs = self.clip.run(ort::inputs!["pixel_values" => input]?)?;
+        let embedding = outputs[0].try_extract_tensor::<f32>()?;
+        Ok(normalize(embedding.view().iter().copied().collect()))
     }
 
-    /// Embed free text or a conceptual query -> 384-d MiniLM vector.
-    pub fn embed_text(&self, _text: &str) -> Result<Vec<f32>> {
-        todo!("tokenize + ort::Session::run against self.minilm")
+    /// Embed free text -> 384-d MiniLM vector via mean-pooled last hidden state.
+    pub fn embed_text(&mut self, text: &str) -> Result<Vec<f32>> {
+        embed_with_tokenizer(&mut self.minilm, &self.minilm_tokenizer, text)
     }
 
     /// Embed a code snippet -> 384-d Jina-Code vector.
-    pub fn embed_code(&self, _snippet: &str) -> Result<Vec<f32>> {
-        todo!("tokenize + ort::Session::run against self.jina_code")
+    pub fn embed_code(&mut self, snippet: &str) -> Result<Vec<f32>> {
+        embed_with_tokenizer(&mut self.jina_code, &self.jina_tokenizer, snippet)
     }
+}
+
+/// Shared tokenize -> run -> mean-pool -> L2-normalize path used by both
+/// text-style embedding models (they share the same ONNX I/O shape:
+/// input_ids/attention_mask in, last_hidden_state out).
+fn embed_with_tokenizer(session: &mut Session, tokenizer: &Tokenizer, text: &str) -> Result<Vec<f32>> {
+    let encoding = tokenizer
+        .encode(text, true)
+        .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
+
+    let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
+    let mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+    let seq_len = ids.len();
+
+    let ids_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), ids)?).into_dyn();
+    let mask_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), mask.clone())?).into_dyn();
+
+    let input_ids = Value::from_array(ids_arr)?;
+    let attention_mask = Value::from_array(mask_arr)?;
+
+    let outputs = session.run(ort::inputs![
+        "input_ids" => input_ids,
+        "attention_mask" => attention_mask,
+    ]?)?;
+
+    // last_hidden_state: [1, seq_len, hidden_dim] -> mean-pool over
+    // non-padding tokens, matching sentence-transformers' pooling.
+    let hidden = outputs[0].try_extract_tensor::<f32>()?;
+    let shape = hidden.shape();
+    let hidden_dim = shape[2];
+
+    let mut pooled = vec![0f32; hidden_dim];
+    let mut valid_tokens = 0f32;
+    for (t, &m) in mask.iter().enumerate() {
+        if m == 0 {
+            continue;
+        }
+        valid_tokens += 1.0;
+        for d in 0..hidden_dim {
+            pooled[d] += hidden[[0, t, d]];
+        }
+    }
+    if valid_tokens > 0.0 {
+        for v in pooled.iter_mut() {
+            *v /= valid_tokens;
+        }
+    }
+
+    Ok(normalize(pooled))
+}
+
+fn normalize(mut v: Vec<f32>) -> Vec<f32> {
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
+    }
+    v
 }

@@ -1,0 +1,6 @@
+<resources>
+    <color name="ink">#000000</color>
+    <color name="paper">#FFFFFF</color>
+    <color name="rule">#D8D8D8</color>
+    <color name="gray_mid">#6B6B6B</color>
+</resources>

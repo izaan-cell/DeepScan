@@ -13,6 +13,8 @@ import (
 )
 
 func main() {
+	loadEnv()
+
 	engineAddr, err := readEngineLock()
 	if err != nil {
 		log.Fatalf("could not find running DeepScan engine: %v", err)
@@ -32,9 +34,9 @@ func main() {
 		log.Fatalf("failed to start filesystem watcher: %v", err)
 	}
 
-	// Directories the user has added via the UI — persisted separately;
-	// hardcoded home dir here as the scaffold default.
-	for _, root := range defaultWatchRoots() {
+	// Directories to watch — DEEPSCAN_WATCH_ROOTS from .env.dev/.env, or
+	// the user's Documents/Desktop by default (see config.go).
+	for _, root := range watchRootsFromEnv() {
 		if err := watcher.AddRecursive(root); err != nil {
 			log.Printf("warning: could not watch %s: %v", root, err)
 		}

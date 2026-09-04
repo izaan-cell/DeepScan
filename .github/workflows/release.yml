@@ -1,0 +1,132 @@
+name: Release
+
+# Every push to main bumps VERSION (patch), tags it, builds DeepScan.dmg
+# (macOS) and DeepScan.msi (Windows), and publishes both to a GitHub
+# Release — see /releases. Commits made by this workflow itself carry
+# "[skip release]" to avoid re-triggering on their own push.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: bump
+        run: |
+          current="$(cat VERSION)"
+          IFS='.' read -r major minor patch <<< "$current"
+          new="$major.$minor.$((patch + 1))"
+          echo "$new" > VERSION
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=v$new" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to $new [skip release]"
+          git tag "v$new"
+          git push origin HEAD:main
+          git push origin "v$new"
+
+  build-macos:
+    needs: bump-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: brew install protobuf
+
+      - name: Build DeepScan.dmg
+        run: |
+          chmod +x packaging/macos/build-dmg.sh
+          packaging/macos/build-dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeepScan-dmg
+          path: dist/DeepScan.dmg
+
+  build-windows:
+    needs: bump-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - uses: arduino/setup-protoc@v3
+
+      - name: Build engine + daemon
+        shell: bash
+        run: |
+          cd rust-engine && cargo build --release
+          cd ../go-daemon && go build -o deepscan-daemon.exe .
+
+      - name: Stage installer contents
+        shell: bash
+        run: |
+          mkdir -p stage/bin
+          cp rust-engine/target/release/deepscan-engine.exe stage/bin/
+          cp go-daemon/deepscan-daemon.exe stage/bin/
+          cp -r frontend stage/frontend
+          cp packaging/windows/launcher.ps1 stage/
+
+      - run: dotnet tool install --global wix
+
+      - name: Build DeepScan.msi
+        shell: bash
+        run: |
+          mkdir -p dist
+          wix build packaging/windows/deepscan.wxs \
+            -d Version=${{ needs.bump-version.outputs.version }} \
+            -o dist/DeepScan.msi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeepScan-msi
+          path: dist/DeepScan.msi
+
+  release:
+    needs: [bump-version, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump-version.outputs.tag }}
+          name: DeepScan ${{ needs.bump-version.outputs.version }}
+          body: |
+            ## DeepScan ${{ needs.bump-version.outputs.version }}
+
+            | File | Platform |
+            |---|---|
+            | `DeepScan.dmg` | macOS |
+            | `DeepScan.msi` | Windows |
+          files: |
+            artifacts/DeepScan-dmg/DeepScan.dmg
+            artifacts/DeepScan-msi/DeepScan.msi

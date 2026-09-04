@@ -12,6 +12,14 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 anyhow = "1"
+dotenvy = "0.15"
+
+# Web service layer: JSON API + serves the frontend SPA as static files,
+# so DeepScan runs as one local web service reachable from any browser
+# (see docs/ARCHITECTURE.md #4).
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+futures = "0.3"
 
 # gRPC
 tonic = "0.12"
@@ -20,11 +28,12 @@ prost = "0.13"
 # ONNX Runtime bindings — local CLIP / MiniLM / Jina-Code inference
 ort = { version = "2.0.0-rc.4", features = ["download-binaries"] }
 ndarray = "0.16"
+tokenizers = "0.20"
 
 # Embedded vector database
-lancedb = "0.13"
-arrow-array = "53"
-arrow-schema = "53"
+lancedb = "0.38"
+arrow-array = "55"
+arrow-schema = "55"
 
 # File type routing / traversal
 walkdir = "2"
@@ -33,9 +42,15 @@ infer = "0.16"        # magic-byte MIME sniffing
 image = "0.25"        # raster decode for images
 resvg = "0.44"        # SVG rasterization
 
-# Audio/video
-whisper-rs = "0.13"
-ffmpeg-next = "7"
+# Audio/video — deferred: whisper-rs needs `cmake`, and ffmpeg-next 7.x's
+# bindings reference avfft.h, which modern FFmpeg (Homebrew's included) has
+# removed upstream. Nothing calls these yet (see router::ExtractionPlan::
+# AudioVideoPipeline, intentionally left unimplemented in service.rs), so
+# they're commented out rather than blocking the rest of the engine from
+# building. Re-add once a compatible FFmpeg pin (or a build without
+# avfft-dependent features) is sorted out.
+# whisper-rs = "0.13"
+# ffmpeg-next = "7"
 
 # OCR (pure Rust, no Python/Tesseract dependency)
 ocrs = "0.9"
