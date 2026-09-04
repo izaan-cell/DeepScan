@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DeepScan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="wordmark">
+      <span class="glyph" aria-hidden="true"></span>
+      <h1>DeepScan</h1>
+    </div>
+    <p class="tagline"><em>a local search, for everything you keep</em></p>
+  </header>
+
+  <main>
+
+    <!-- Drop Zone / Input Bar -->
+    <section class="input-module" id="inputModule">
+      <textarea
+        id="queryInput"
+        placeholder="Describe what you're looking for — a phrase, a snippet of code, a feeling…"
+        rows="1"
+      ></textarea>
+      <div class="input-divider"><span>or drop an image</span></div>
+      <div class="drop-target" id="dropTarget">
+        <span id="dropLabel">drag an image or icon here</span>
+        <input type="file" id="fileInput" accept="image/*" hidden />
+      </div>
+    </section>
+
+    <!-- Scope Selector -->
+    <nav class="scope-selector" id="scopeSelector">
+      <button class="chip is-active" data-scope="all">All Files</button>
+      <button class="chip" data-scope="image">Images</button>
+      <button class="chip" data-scope="code">Code</button>
+      <button class="chip" data-scope="document">Documents</button>
+      <button class="chip" data-scope="audio">Audio</button>
+      <button class="chip" data-scope="video">Video</button>
+    </nav>
+
+    <!-- Index Status Monitor -->
+    <div class="status-ticker" id="statusTicker">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">connecting to local index…</span>
+    </div>
+
+    <!-- Results Canvas -->
+    <section class="results-canvas" id="resultsCanvas">
+      <p class="empty-state">Results will appear here once you search.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    <p><em>Everything stays on this machine.</em> No cloud, no accounts, no tracking.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+syntax = "proto3";
+package deepscan.v1;
+
+option go_package = "github.com/izaan-cell/DeepScan/go-daemon/pb;pb";
+option java_package = "com.deepscan.parser.pb";
+option java_multiple_files = true;
+
+// ---------- Shared types ----------
+
+enum FileCategory {
+  FILE_CATEGORY_UNSPECIFIED = 0;
+  FILE_CATEGORY_IMAGE       = 1;
+  FILE_CATEGORY_CODE        = 2;
+  FILE_CATEGORY_DOCUMENT    = 3;
+  FILE_CATEGORY_AUDIO       = 4;
+  FILE_CATEGORY_VIDEO       = 5;
+}
+
+enum ChangeKind {
+  CHANGE_KIND_UNSPECIFIED = 0;
+  CHANGE_KIND_CREATED     = 1;
+  CHANGE_KIND_MODIFIED    = 2;
+  CHANGE_KIND_DELETED     = 3;
+  CHANGE_KIND_RENAMED     = 4;
+}
+
+message FileRef {
+  string path = 1;
+  int64 size_bytes = 2;
+  int64 modified_unix_ms = 3;
+  FileCategory category = 4;
+}
+
+// ---------- IndexService: Go daemon -> Rust engine ----------
+
+service IndexService {
+  rpc WatchEvents(stream FsEvent) returns (stream IndexAck);
+  rpc IndexPath(IndexPathRequest) returns (stream IndexProgress);
+  rpc GetIndexStatus(Empty) returns (IndexStatus);
+}
+
+message FsEvent {
+  ChangeKind kind = 1;
+  FileRef file = 2;
+  string renamed_from = 3;
+}
+
+message IndexAck {
+  string path = 1;
+  bool accepted = 2;
+  string error = 3;
+}
+
+message IndexPathRequest {
+  string root_path = 1;
+  bool recursive = 2;
+}
+
+message IndexProgress {
+  int64 files_scanned = 1;
+  int64 files_indexed = 2;
+  int64 files_skipped = 3;
+  string current_path = 4;
+  bool done = 5;
+}
+
+message IndexStatus {
+  bool db_healthy = 1;
+  int64 total_indexed_files = 2;
+  int64 pending_queue_depth = 3;
+  bool is_scanning = 4;
+  string last_error = 5;
+}
+
+// ---------- SearchService: UI -> Rust engine ----------
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc RevealInOs(RevealRequest) returns (RevealResponse);
+}
+
+message SearchRequest {
+  oneof query {
+    string text_query = 1;
+    bytes image_query_bytes = 2;
+  }
+  repeated FileCategory scope = 3;
+  int32 top_k = 4;
+}
+
+message SearchResult {
+  FileRef file = 1;
+  float score = 2;
+  string snippet = 3;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+  int64 query_time_ms = 2;
+}
+
+message RevealRequest { string path = 1; }
+message RevealResponse { bool success = 1; string error = 2; }
+
+// ---------- ParserBridgeService: Rust engine -> Java Tika service ----------
+
+service ParserBridgeService {
+  rpc ExtractDocument(ExtractRequest) returns (ExtractResponse);
+}
+
+message ExtractRequest {
+  string path = 1;
+  string mime_hint = 2;
+}
+
+message ExtractResponse {
+  string extracted_text = 1;
+  map<string, string> metadata = 2;
+  bool ocr_used = 3;
+}
+
+message Empty {}

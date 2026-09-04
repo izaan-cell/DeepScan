@@ -1,0 +1,24 @@
+# Rust
+rust-engine/target/
+
+# Go
+go-daemon/deepscan-daemon
+go-daemon/*.exe
+
+# Java
+java-parser/target/
+*.class
+
+# Generated protobuf code
+**/pb/
+**/gen/
+
+# Local runtime data (models, LanceDB, IPC lockfiles) — never committed
+.deepscan/
+*.onnx
+engine.lock
+parser.lock
+
+# OS
+.DS_Store
+Thumbs.db
