@@ -32,6 +32,7 @@ cp "$REPO_ROOT/packaging/macos/launcher.sh" "$APP/Contents/MacOS/DeepScan"
 chmod +x "$APP/Contents/MacOS/DeepScan"
 
 sed "s/__VERSION__/$VERSION/g" "$REPO_ROOT/packaging/macos/Info.plist.template" > "$APP/Contents/Info.plist"
+cp "$REPO_ROOT/packaging/macos/assets/DeepScan.icns" "$APP/Contents/Resources/DeepScan.icns"
 
 if [ -f "$REPO_ROOT/java-parser/target/deepscan-parser.jar" ]; then
   echo "==> Bundling java-parser (Tika document extraction)"
@@ -43,6 +44,12 @@ if [ -f "$REPO_ROOT/java-parser/target/deepscan-parser.jar" ]; then
 else
   echo "==> Skipping java-parser (no target/deepscan-parser.jar — run 'mvn package' in java-parser/ first for document search)"
 fi
+
+echo "==> Ad-hoc signing (free — no Developer ID, doesn't remove the Gatekeeper"
+echo "    'unidentified developer' warning, but avoids a separate, worse"
+echo "    'app is damaged and can't be opened' error some unsigned Apple"
+echo "    Silicon builds hit)"
+codesign --force --deep --sign - "$APP"
 
 echo "==> Assembling dmg staging root"
 STAGING="$BUILD_DIR/dmg-root"
