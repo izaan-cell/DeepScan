@@ -37,10 +37,23 @@
     </Feature>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="DeepScan">
-        <Files Include="stage\**" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="DeepScan" />
     </StandardDirectory>
+
+    <!-- A bare <Files> directly under <Directory> has no ComponentGroup
+         of its own — <ComponentGroupRef Id="AppFiles"/> above was
+         referencing an id nothing ever defined (WIX0094:
+         "WixComponentGroup:AppFiles could not be found"). Also,
+         "stage\**" as a plain relative path had no defined base — WiX
+         resolved it relative to something other than where the workflow
+         actually created it (a bare `mkdir -p stage` in
+         $GITHUB_WORKSPACE), so harvesting failed to find any files at
+         all ("Missing directory for harvesting files"). $(var.StageDir)
+         is passed in by the workflow as an absolute path, removing any
+         ambiguity about what directory this is relative to. -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.StageDir)\**" />
+    </ComponentGroup>
 
     <StandardDirectory Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut" Guid="3a7d5e9c-1b2f-4c8a-9d6e-5f0a3b7c8e1d">

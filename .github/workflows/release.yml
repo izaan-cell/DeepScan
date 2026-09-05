@@ -112,9 +112,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          # A bare relative "stage\**" in the .wxs left WiX to guess what
+          # directory that was relative to, and it guessed wrong (harvesting
+          # failed to find any files at all). Passing the actual absolute
+          # path removes the ambiguity entirely — pwd -W gives the
+          # Windows-style path git-bash's own $(pwd) (POSIX-style) can't.
+          stage_dir="$(pwd -W)/stage"
           wix build packaging/windows/deepscan.wxs \
             -ext WixToolset.UI.wixext \
             -d Version=${{ needs.bump-version.outputs.version }} \
+            -d StageDir="$stage_dir" \
             -o dist/DeepScan.msi
 
       - uses: actions/upload-artifact@v4
