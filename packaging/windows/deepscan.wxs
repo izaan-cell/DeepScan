@@ -15,10 +15,10 @@
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package
-      name="DeepScan"
-      manufacturer="DeepScan"
-      version="$(var.Version)"
-      upgradeCode="8f2c9b1a-6e4d-4a3b-9c7e-2d1a5b8f4c6e">
+      Name="DeepScan"
+      Manufacturer="DeepScan"
+      Version="$(var.Version)"
+      UpgradeCode="8f2c9b1a-6e4d-4a3b-9c7e-2d1a5b8f4c6e">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of DeepScan is already installed." />
     <MediaTemplate EmbedCab="yes" />
