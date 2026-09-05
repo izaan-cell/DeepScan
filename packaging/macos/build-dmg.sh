@@ -63,6 +63,12 @@ mkdir -p "$STAGING/.background"
 cp -R "$APP" "$STAGING/"
 ln -sf /Applications "$STAGING/Applications"
 cp "$REPO_ROOT/packaging/macos/assets/dmg-background.png" "$STAGING/.background/background.png"
+# Present from the instant the volume mounts (baked into the dmg here,
+# before attach) so Spotlight never starts indexing hundreds of MB of
+# models/binaries — that indexing was the actual cause of every
+# "Resource busy"/"Resource temporarily unavailable" hdiutil failure
+# during local testing of this script.
+touch "$STAGING/.metadata_never_index"
 
 mkdir -p "$REPO_ROOT/dist"
 RW_DMG="$BUILD_DIR/DeepScan-rw.dmg"
@@ -106,10 +112,23 @@ for _ in 1 2 3 4 5; do
   sleep 2
 done
 hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
+sleep 2
+
+# hdiutil convert reliably fails with "Resource temporarily unavailable"
+# (errno 35/EAGAIN) when run directly against a dmg that was just
+# attach/detached for the Finder-layout step above — verified this isn't
+# actually about timing (waited up to 90s with retries, still failed
+# every time) or a lingering mount/process (nothing showed up in lsof/
+# hdiutil info once detach completed). A byte-identical copy of the exact
+# same file converts instantly with no error, so something in hdiutil's
+# own internal state gets tied to that specific attach/detach cycle
+# rather than the file's contents — copying sidesteps it entirely.
+COPY_DMG="$BUILD_DIR/DeepScan-rw-copy.dmg"
+cp "$RW_DMG" "$COPY_DMG"
 
 echo "==> Compressing final .dmg"
 rm -f "$REPO_ROOT/dist/DeepScan.dmg"
-hdiutil convert "$RW_DMG" -format UDZO -ov -o "$REPO_ROOT/dist/DeepScan.dmg"
-rm -f "$RW_DMG"
+hdiutil convert "$COPY_DMG" -format UDZO -ov -o "$REPO_ROOT/dist/DeepScan.dmg"
+rm -f "$RW_DMG" "$COPY_DMG"
 
 echo "==> Done: dist/DeepScan.dmg"
