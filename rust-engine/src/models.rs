@@ -87,19 +87,32 @@ impl ModelBundle {
 
     /// Embed free text -> 384-d MiniLM vector via mean-pooled last hidden state.
     pub fn embed_text(&mut self, text: &str) -> Result<Vec<f32>> {
-        embed_with_tokenizer(&mut self.minilm, &self.minilm_tokenizer, text)
+        // MiniLM's ONNX graph declares token_type_ids as a required input
+        // (unlike Jina-Code's) — verified against the actual exported graph,
+        // not assumed. All-zeros is correct here: MiniLM only ever sees a
+        // single-segment input, never a sentence-pair, so every token's
+        // type id is 0 either way.
+        embed_with_tokenizer(&mut self.minilm, &self.minilm_tokenizer, text, true)
     }
 
-    /// Embed a code snippet -> 384-d Jina-Code vector.
+    /// Embed a code snippet -> 768-d Jina-Code vector. Note: this is a
+    /// different dimensionality than embed_text's 384 (Jina-Code's native
+    /// hidden size, verified against its actual ONNX export) — stored in
+    /// LanceDB's separate `code_vector` column, see db.rs.
     pub fn embed_code(&mut self, snippet: &str) -> Result<Vec<f32>> {
-        embed_with_tokenizer(&mut self.jina_code, &self.jina_tokenizer, snippet)
+        embed_with_tokenizer(&mut self.jina_code, &self.jina_tokenizer, snippet, false)
     }
 }
 
-/// Shared tokenize -> run -> mean-pool -> L2-normalize path used by both
-/// text-style embedding models (they share the same ONNX I/O shape:
-/// input_ids/attention_mask in, last_hidden_state out).
-fn embed_with_tokenizer(session: &mut Session, tokenizer: &Tokenizer, text: &str) -> Result<Vec<f32>> {
+/// Shared tokenize -> run -> mean-pool -> L2-normalize path for both
+/// text-style models. `needs_token_type_ids` differs per model — verified
+/// against each model's actual ONNX graph rather than assumed uniform.
+fn embed_with_tokenizer(
+    session: &mut Session,
+    tokenizer: &Tokenizer,
+    text: &str,
+    needs_token_type_ids: bool,
+) -> Result<Vec<f32>> {
     let encoding = tokenizer
         .encode(text, true)
         .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
@@ -114,10 +127,21 @@ fn embed_with_tokenizer(session: &mut Session, tokenizer: &Tokenizer, text: &str
     let input_ids = Value::from_array(&ids_arr)?;
     let attention_mask = Value::from_array(&mask_arr)?;
 
-    let outputs = session.run(ort::inputs![
-        "input_ids" => input_ids,
-        "attention_mask" => attention_mask,
-    ]?)?;
+    let outputs = if needs_token_type_ids {
+        let type_ids = vec![0i64; seq_len];
+        let type_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), type_ids)?).into_dyn();
+        let token_type_ids = Value::from_array(&type_arr)?;
+        session.run(ort::inputs![
+            "input_ids" => input_ids,
+            "attention_mask" => attention_mask,
+            "token_type_ids" => token_type_ids,
+        ]?)?
+    } else {
+        session.run(ort::inputs![
+            "input_ids" => input_ids,
+            "attention_mask" => attention_mask,
+        ]?)?
+    };
 
     // last_hidden_state: [1, seq_len, hidden_dim] -> mean-pool over
     // non-padding tokens, matching sentence-transformers' pooling.

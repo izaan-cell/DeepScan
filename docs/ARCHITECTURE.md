@@ -188,12 +188,17 @@ vector columns:
 | `category` | string enum | all rows |
 | `modified_unix_ms` | int64 | all rows |
 | `clip_vector` | `float32[512]` | images, video keyframes |
-| `text_vector` | `float32[384]` | code, documents, OCR text, transcripts |
+| `text_vector` | `float32[384]` | documents, OCR text, transcripts (MiniLM) |
+| `code_vector` | `float32[768]` | code, scripts (Jina-Code) |
 | `snippet` | string | thumbnail cache path or text excerpt |
 
 LanceDB natively supports nullable vector columns and ANN search (IVF_PQ) per-column, so a
-single table serves both modalities — the query path picks `clip_vector` or `text_vector`
-depending on whether the query is an image or a text/code string.
+single table serves all three modalities. Code gets its own column rather than sharing
+`text_vector` with documents — Jina-Code's native hidden size is 768, not 384 like MiniLM
+(verified against the actual ONNX export; an earlier draft of this doc assumed both models
+shared MiniLM's dimensionality, which was wrong). A plain text query embeds with both
+MiniLM and Jina-Code and searches both columns, merging by score, so one search bar still
+covers both code and documents.
 
 ---
 

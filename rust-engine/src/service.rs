@@ -30,13 +30,26 @@ impl Core {
         Self { state }
     }
 
+    /// A plain text query searches both the document column (MiniLM) and
+    /// the code column (Jina-Code) — matching the "one search bar across
+    /// every file type" design — then merges by score. The two models
+    /// produce differently-scaled distances, so this is a reasonable
+    /// approximation, not a calibrated joint ranking.
     pub async fn search_text(&self, query: &str, top_k: usize) -> anyhow::Result<Vec<ScoredFile>> {
-        let vector = {
+        let (text_vector, code_vector) = {
             let mut models = self.state.models.lock().await;
-            models.embed_text(query)?
+            (models.embed_text(query)?, models.embed_code(query)?)
         };
-        let rows = self.state.db.search_text(vector, top_k).await?;
-        Ok(rows.into_iter().map(to_scored_file).collect())
+        let (text_rows, code_rows) = tokio::try_join!(
+            self.state.db.search_text(text_vector, top_k),
+            self.state.db.search_code(code_vector, top_k),
+        )?;
+
+        let mut combined: Vec<ScoredFile> =
+            text_rows.into_iter().chain(code_rows).map(to_scored_file).collect();
+        combined.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        combined.truncate(top_k);
+        Ok(combined)
     }
 
     pub async fn search_image(&self, bytes: &[u8], top_k: usize) -> anyhow::Result<Vec<ScoredFile>> {
@@ -86,6 +99,7 @@ impl Core {
                     snippet: None,
                     clip_vector: Some(vector),
                     text_vector: None,
+                    code_vector: None,
                 }
             }
             ExtractionPlan::DirectCode => {
@@ -101,7 +115,8 @@ impl Core {
                     modified_unix_ms,
                     snippet: Some(snippet),
                     clip_vector: None,
-                    text_vector: Some(vector),
+                    text_vector: None,
+                    code_vector: Some(vector),
                 }
             }
             ExtractionPlan::ViaTikaThenMiniLm => {
@@ -118,6 +133,7 @@ impl Core {
                     snippet: Some(snippet),
                     clip_vector: None,
                     text_vector: Some(vector),
+                    code_vector: None,
                 }
             }
             ExtractionPlan::AudioVideoPipeline => {

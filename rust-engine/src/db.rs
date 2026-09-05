@@ -1,5 +1,9 @@
-//! Single embedded LanceDB table `indexed_files` holding both the 512-d CLIP
-//! column and the 384-d text column, per docs/ARCHITECTURE.md #3.
+//! Single embedded LanceDB table `indexed_files` holding the 512-d CLIP
+//! column, the 384-d MiniLM text column, and a separate 768-d Jina-Code
+//! column, per docs/ARCHITECTURE.md #3. Text and code get separate columns
+//! (not one shared "text_vector") because Jina-Code's native hidden size is
+//! 768, not 384 like MiniLM — verified against the actual ONNX export,
+//! not assumed uniform.
 
 use anyhow::Result;
 use futures::TryStreamExt;
@@ -20,6 +24,7 @@ pub struct VectorStore {
 const TABLE: &str = "indexed_files";
 const CLIP_DIM: i32 = 512;
 const TEXT_DIM: i32 = 384;
+const CODE_DIM: i32 = 768;
 
 /// One row to upsert — a file with whichever vector(s) apply to its category.
 pub struct FileRow {
@@ -29,6 +34,7 @@ pub struct FileRow {
     pub snippet: Option<String>,
     pub clip_vector: Option<Vec<f32>>,
     pub text_vector: Option<Vec<f32>>,
+    pub code_vector: Option<Vec<f32>>,
 }
 
 pub struct ScoredRow {
@@ -89,6 +95,10 @@ impl VectorStore {
         self.search_column("text_vector", query, top_k).await
     }
 
+    pub async fn search_code(&self, query: Vec<f32>, top_k: usize) -> Result<Vec<ScoredRow>> {
+        self.search_column("code_vector", query, top_k).await
+    }
+
     async fn search_column(&self, column: &str, query: Vec<f32>, top_k: usize) -> Result<Vec<ScoredRow>> {
         let table = self.conn.open_table(TABLE).execute().await?;
         let mut stream = table
@@ -123,6 +133,11 @@ fn table_schema() -> Schema {
             DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), TEXT_DIM),
             true,
         ),
+        Field::new(
+            "code_vector",
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), CODE_DIM),
+            true,
+        ),
     ]))
 }
 
@@ -142,6 +157,11 @@ fn rows_to_batch(schema: &Arc<Schema>, rows: &[FileRow]) -> Result<RecordBatch> 
             .map(|r| r.text_vector.clone().map(|v| v.into_iter().map(Some))),
         TEXT_DIM,
     );
+    let code_vectors = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+        rows.iter()
+            .map(|r| r.code_vector.clone().map(|v| v.into_iter().map(Some))),
+        CODE_DIM,
+    );
 
     Ok(RecordBatch::try_new(
         schema.clone(),
@@ -152,6 +172,7 @@ fn rows_to_batch(schema: &Arc<Schema>, rows: &[FileRow]) -> Result<RecordBatch> 
             Arc::new(snippets),
             Arc::new(clip_vectors),
             Arc::new(text_vectors),
+            Arc::new(code_vectors),
         ],
     )?)
 }
