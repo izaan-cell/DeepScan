@@ -138,14 +138,14 @@ function renderResults(results) {
     const card = document.createElement("article");
     card.className = "result-card";
     card.innerHTML = `
-      <div class="file-category">${escapeHtml(r.file.category)}</div>
-      <div class="file-name">${escapeHtml(basename(r.file.path))}</div>
-      <div class="file-path">${escapeHtml(r.file.path)}</div>
+      <div class="file-category">${escapeHtml(r.category)}</div>
+      <div class="file-name">${escapeHtml(basename(r.path))}</div>
+      <div class="file-path">${escapeHtml(r.path)}</div>
       <button class="reveal-action">reveal in ${platformFileManagerName()}</button>
     `;
     card.querySelector(".reveal-action").addEventListener("click", (e) => {
       e.stopPropagation();
-      revealInOs(r.file.path);
+      revealInOs(r.path);
     });
     els.resultsCanvas.appendChild(card);
   }
