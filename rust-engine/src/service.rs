@@ -176,9 +176,19 @@ impl Core {
                 // (see .result-snippet's -webkit-line-clamp), so this doesn't
                 // change what's shown, only what's searchable.
                 let snippet: String = text.chars().take(8000).collect();
+                // Embed the capped snippet, not the raw file — embed_code
+                // tokenizes whatever it's given with no length limit of its
+                // own, and self-attention memory scales quadratically with
+                // sequence length. A single unusually large source file (a
+                // generated bundle, a big data file, even just a long
+                // legitimate one) fed in whole was enough to balloon the
+                // engine's memory into the gigabytes and crash it outright
+                // on an 8GB machine — this is what was actually behind the
+                // intermittent hangs/timeouts under load, not lock
+                // contention alone.
                 let vector = {
                     let mut models = self.state.models.lock().await;
-                    models.embed_code(&text)?
+                    models.embed_code(&snippet)?
                 };
                 FileRow {
                     path: path.to_string_lossy().into_owned(),
@@ -200,9 +210,11 @@ impl Core {
                 // (see .result-snippet's -webkit-line-clamp), so this doesn't
                 // change what's shown, only what's searchable.
                 let snippet: String = text.chars().take(8000).collect();
+                // Same reasoning as DirectCode above — embed the capped
+                // snippet, never the raw extracted document text.
                 let vector = {
                     let mut models = self.state.models.lock().await;
-                    models.embed_text(&text)?
+                    models.embed_text(&snippet)?
                 };
                 FileRow {
                     path: path.to_string_lossy().into_owned(),

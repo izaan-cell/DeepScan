@@ -102,6 +102,21 @@ impl ModelBundle {
     }
 }
 
+/// Self-attention memory/compute scales quadratically with sequence
+/// length, and neither model's ONNX graph rejects an over-long input —
+/// Jina-Code in particular is explicitly a long-context model (trained up
+/// to 8192 tokens) and will simply try to run whatever it's given. Every
+/// caller is expected to pre-truncate its *input text* to something
+/// reasonable already (see service.rs's 8000-char snippet cap), but that
+/// alone isn't enough: a search query is raw user input with no cap of
+/// its own (someone pasting a huge chunk of code into the search box and
+/// hitting Send), and this is the one choke point every embed call — text
+/// or code, index-time or query-time — actually passes through. 512
+/// tokens comfortably covers everything from a search query to a
+/// meaningful chunk of file content, while keeping worst-case attention
+/// memory bounded to something sane on an 8GB machine.
+const MAX_TOKENS: usize = 512;
+
 /// Shared tokenize -> run -> mean-pool -> L2-normalize path for both
 /// text-style models. `needs_token_type_ids` differs per model — verified
 /// against each model's actual ONNX graph rather than assumed uniform.
@@ -115,8 +130,10 @@ fn embed_with_tokenizer(
         .encode(text, true)
         .map_err(|e| anyhow::anyhow!("tokenization failed: {e}"))?;
 
-    let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-    let mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+    let mut ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
+    let mut mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+    ids.truncate(MAX_TOKENS);
+    mask.truncate(MAX_TOKENS);
     let seq_len = ids.len();
 
     let ids_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), ids)?).into_dyn();
