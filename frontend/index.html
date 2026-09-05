@@ -12,15 +12,6 @@
 <body>
 
   <header class="masthead">
-    <div class="edit-menu" id="editMenu">
-      <button class="edit-menu-toggle" id="editMenuToggle" aria-haspopup="true" aria-expanded="false">Edit ▾</button>
-      <div class="edit-menu-list" id="editMenuList" hidden>
-        <button data-edit-action="cut">Cut</button>
-        <button data-edit-action="copy">Copy</button>
-        <button data-edit-action="paste">Paste</button>
-        <button data-edit-action="selectAll">Select All</button>
-      </div>
-    </div>
     <div class="wordmark">
       <img class="glyph" src="assets/logo.png" alt="" aria-hidden="true">
       <h1>DeepScan</h1>
@@ -32,14 +23,21 @@
 
     <!-- Drop Zone / Input Bar -->
     <section class="input-module" id="inputModule">
-      <textarea
-        id="queryInput"
-        placeholder="Describe what you're looking for — a phrase, a snippet of code, a feeling…"
-        rows="1"
-      ></textarea>
+      <div class="query-row">
+        <textarea
+          id="queryInput"
+          placeholder="Describe what you're looking for — a phrase, a snippet of code, a feeling… (Enter for a new line)"
+          rows="1"
+        ></textarea>
+        <button id="sendButton" aria-label="Search" hidden>&#8617;</button>
+      </div>
       <div class="input-divider"><span>or drop an image</span></div>
       <div class="drop-target" id="dropTarget">
         <span id="dropLabel">drag an image or icon here</span>
+        <div class="image-preview" id="imagePreview" hidden>
+          <img id="previewImg" alt="" />
+          <button id="clearImageButton" aria-label="Clear image">&times;</button>
+        </div>
         <input type="file" id="fileInput" accept="image/*" hidden />
       </div>
     </section>

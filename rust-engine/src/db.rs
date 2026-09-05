@@ -110,6 +110,40 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Plain substring match against filename and content — semantic
+    /// vector search alone can miss an exact fragment the user actually
+    /// typed (a specific variable name, an exact phrase, a filename with
+    /// no meaningful embedding), especially since it's the only way
+    /// images ever match a text query at all (they have no text/code
+    /// vector, only clip_vector, so "type a name and find that image"
+    /// otherwise turns up nothing no matter how exact the name is).
+    /// Matches get a fixed max score — there's no distance metric here — so
+    /// callers should treat them as "definitely relevant", not comparable
+    /// on the same scale as a KNN score.
+    pub async fn search_literal(&self, query: &str, top_k: usize) -> Result<Vec<ScoredRow>> {
+        let table = self.conn.open_table(TABLE).execute().await?;
+        let escaped = query.to_lowercase().replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
+        let filter = format!("LOWER(path) LIKE '%{escaped}%' OR LOWER(snippet) LIKE '%{escaped}%'");
+        let mut stream = table.query().only_if(filter).limit(top_k).execute().await?;
+
+        let mut rows = Vec::new();
+        while let Some(batch) = stream.try_next().await? {
+            let paths = batch.column_by_name("path").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let categories = batch.column_by_name("category").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let snippets = batch.column_by_name("snippet").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let (Some(paths), Some(categories)) = (paths, categories) else { continue };
+            for i in 0..batch.num_rows() {
+                rows.push(ScoredRow {
+                    path: paths.value(i).to_string(),
+                    category: categories.value(i).to_string(),
+                    snippet: snippets.map(|s| s.value(i).to_string()).filter(|s| !s.is_empty()),
+                    score: 1.0,
+                });
+            }
+        }
+        Ok(rows)
+    }
+
     pub async fn search_clip(&self, query: Vec<f32>, top_k: usize) -> Result<Vec<ScoredRow>> {
         self.search_column("clip_vector", query, top_k).await
     }

@@ -66,21 +66,39 @@ impl Core {
 
     /// A plain text query searches both the document column (MiniLM) and
     /// the code column (Jina-Code) — matching the "one search bar across
-    /// every file type" design — then merges by score. The two models
-    /// produce differently-scaled distances, so this is a reasonable
-    /// approximation, not a calibrated joint ranking.
+    /// every file type" design — plus a plain substring match on filename
+    /// and content (db::search_literal), then merges by score. The two
+    /// embedding models produce differently-scaled distances, so semantic
+    /// ranking between them is a reasonable approximation, not a
+    /// calibrated joint score — but a literal match is unambiguous, so
+    /// those always outrank a semantic-only hit regardless of its score.
+    /// This is also the only way an image ever matches a typed query at
+    /// all: images have no text/code vector, only clip_vector, so without
+    /// the filename half of this, typing an image's name found nothing.
     pub async fn search_text(&self, query: &str, top_k: usize) -> anyhow::Result<Vec<ScoredFile>> {
         let (text_vector, code_vector) = {
             let mut models = self.state.models.lock().await;
             (models.embed_text(query)?, models.embed_code(query)?)
         };
-        let (text_rows, code_rows) = tokio::try_join!(
+        let (text_rows, code_rows, literal_rows) = tokio::try_join!(
             self.state.db.search_text(text_vector, top_k),
             self.state.db.search_code(code_vector, top_k),
+            self.state.db.search_literal(query, top_k),
         )?;
 
-        let mut combined: Vec<ScoredFile> =
-            text_rows.into_iter().chain(code_rows).map(to_scored_file).collect();
+        let mut by_path: std::collections::HashMap<String, ScoredFile> = std::collections::HashMap::new();
+        for row in text_rows.into_iter().chain(code_rows) {
+            let file = to_scored_file(row);
+            by_path.entry(file.path.clone()).and_modify(|e| e.score = e.score.max(file.score)).or_insert(file);
+        }
+        // Literal matches always win a tie against a semantic score, since
+        // 1.0 is already the ceiling of the KNN scoring in db.rs — insert
+        // last so it overwrites rather than being maxed against.
+        for row in literal_rows {
+            by_path.insert(row.path.clone(), to_scored_file(row));
+        }
+
+        let mut combined: Vec<ScoredFile> = by_path.into_values().collect();
         combined.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         combined.truncate(top_k);
         Ok(combined)
@@ -138,7 +156,14 @@ impl Core {
             }
             ExtractionPlan::DirectCode => {
                 let text = std::fs::read_to_string(path)?;
-                let snippet: String = text.chars().take(280).collect();
+                // Long enough that a literal substring search (db::search_literal)
+                // actually has real content to match against — 280 chars was only
+                // ever meant as a UI preview length, but a "find this exact phrase"
+                // search needs far more of the file than its first few lines. The
+                // frontend still visually clamps its own display to a few lines
+                // (see .result-snippet's -webkit-line-clamp), so this doesn't
+                // change what's shown, only what's searchable.
+                let snippet: String = text.chars().take(8000).collect();
                 let vector = {
                     let mut models = self.state.models.lock().await;
                     models.embed_code(&text)?
@@ -155,7 +180,14 @@ impl Core {
             }
             ExtractionPlan::ViaTikaThenMiniLm => {
                 let text = crate::parser_client::extract_document(&path.to_string_lossy()).await?;
-                let snippet: String = text.chars().take(280).collect();
+                // Long enough that a literal substring search (db::search_literal)
+                // actually has real content to match against — 280 chars was only
+                // ever meant as a UI preview length, but a "find this exact phrase"
+                // search needs far more of the file than its first few lines. The
+                // frontend still visually clamps its own display to a few lines
+                // (see .result-snippet's -webkit-line-clamp), so this doesn't
+                // change what's shown, only what's searchable.
+                let snippet: String = text.chars().take(8000).collect();
                 let vector = {
                     let mut models = self.state.models.lock().await;
                     models.embed_text(&text)?

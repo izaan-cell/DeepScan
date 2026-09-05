@@ -38,83 +38,11 @@ const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
   resultsCanvas: document.getElementById("resultsCanvas"),
-  editMenu: document.getElementById("editMenu"),
-  editMenuToggle: document.getElementById("editMenuToggle"),
-  editMenuList: document.getElementById("editMenuList"),
+  sendButton: document.getElementById("sendButton"),
+  imagePreview: document.getElementById("imagePreview"),
+  previewImg: document.getElementById("previewImg"),
+  clearImageButton: document.getElementById("clearImageButton"),
 };
-
-// ---------- Visible Edit menu (Cut/Copy/Paste/Select All) ----------
-//
-// The native window's own Cmd+C/V/X/A and right-click menu already work
-// (see DeepScanWindow.swift's Edit menu), but that's easy to miss on a
-// window with no visible menu bar of its own — this gives the same
-// actions a button people can actually see and click. The query textarea
-// is the only editable field in the app, so these all operate on it
-// directly rather than relying on document.execCommand, which loses the
-// textarea's selection the instant focus moves to the toggle button.
-let savedSelection = { start: 0, end: 0 };
-els.queryInput.addEventListener("blur", () => {
-  savedSelection = { start: els.queryInput.selectionStart, end: els.queryInput.selectionEnd };
-});
-
-els.editMenuToggle.addEventListener("click", (e) => {
-  e.stopPropagation();
-  const isOpen = !els.editMenuList.hidden;
-  els.editMenuList.hidden = isOpen;
-  els.editMenuToggle.setAttribute("aria-expanded", String(!isOpen));
-});
-
-document.addEventListener("click", (e) => {
-  if (!els.editMenu.contains(e.target)) {
-    els.editMenuList.hidden = true;
-    els.editMenuToggle.setAttribute("aria-expanded", "false");
-  }
-});
-
-els.editMenuList.addEventListener("click", async (e) => {
-  const action = e.target.dataset.editAction;
-  if (!action) return;
-  els.editMenuList.hidden = true;
-  els.editMenuToggle.setAttribute("aria-expanded", "false");
-  try {
-    await runEditAction(action);
-  } catch (err) {
-    console.error("[DeepScan] edit action failed:", err);
-    setStatus(false, `${action} failed: ${err.name || "Error"}: ${err.message || err}`, true);
-  }
-});
-
-async function runEditAction(action) {
-  const { start, end } = savedSelection;
-  const value = els.queryInput.value;
-
-  if (action === "selectAll") {
-    els.queryInput.focus();
-    els.queryInput.select();
-    return;
-  }
-
-  if (action === "copy" || action === "cut") {
-    const text = start === end ? value : value.slice(start, end);
-    await navigator.clipboard.writeText(text);
-    if (action === "cut" && start !== end) {
-      els.queryInput.value = value.slice(0, start) + value.slice(end);
-      els.queryInput.focus();
-      els.queryInput.setSelectionRange(start, start);
-      els.queryInput.dispatchEvent(new Event("input"));
-    }
-    return;
-  }
-
-  if (action === "paste") {
-    const text = await navigator.clipboard.readText();
-    els.queryInput.value = value.slice(0, start) + text + value.slice(end);
-    els.queryInput.focus();
-    const pos = start + text.length;
-    els.queryInput.setSelectionRange(pos, pos);
-    els.queryInput.dispatchEvent(new Event("input"));
-  }
-}
 
 // ---------- Scope selector ----------
 
@@ -128,16 +56,21 @@ els.scopeSelector.addEventListener("click", (e) => {
 
 // ---------- Text / code query ----------
 
-let debounceTimer = null;
+// Enter inserts a newline (the textarea's own default behavior — nothing
+// to wire up) so a query can span multiple lines, e.g. a pasted code
+// block. Search only ever runs when Send is actually clicked.
 els.queryInput.addEventListener("input", () => {
   autoGrow(els.queryInput);
-  clearTimeout(debounceTimer);
-  const text = els.queryInput.value.trim();
-  if (!text) {
+  const hasText = !!els.queryInput.value.trim();
+  els.sendButton.hidden = !hasText;
+  if (!hasText) {
     renderEmpty();
-    return;
   }
-  debounceTimer = setTimeout(() => runTextSearch(text), 300);
+});
+
+els.sendButton.addEventListener("click", () => {
+  const text = els.queryInput.value.trim();
+  if (text) runTextSearch(text);
 });
 
 function autoGrow(textarea) {
@@ -170,10 +103,19 @@ els.dropTarget.addEventListener("drop", (e) => {
   if (file) handleImageFile(file);
 });
 
-els.dropTarget.addEventListener("click", () => els.fileInput.click());
+els.dropTarget.addEventListener("click", (e) => {
+  if (e.target === els.clearImageButton) return;
+  els.fileInput.click();
+});
 els.fileInput.addEventListener("change", () => {
   const file = els.fileInput.files?.[0];
   if (file) handleImageFile(file);
+});
+
+els.clearImageButton.addEventListener("click", (e) => {
+  e.stopPropagation();
+  clearImagePreview();
+  renderEmpty();
 });
 
 // A dropped .app (or any other folder) isn't a real single file — the
@@ -183,8 +125,32 @@ els.fileInput.addEventListener("change", () => {
 // since nothing ever caught it.
 const MAX_IMAGE_QUERY_BYTES = 25 * 1024 * 1024;
 
+// Tracks the object URL backing the visible preview so it can be revoked
+// (freeing the memory) whenever it's replaced or cleared — object URLs
+// otherwise just leak for the life of the page.
+let previewObjectUrl = null;
+
+function showImagePreview(file) {
+  if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+  previewObjectUrl = URL.createObjectURL(file);
+  els.previewImg.src = previewObjectUrl;
+  els.imagePreview.hidden = false;
+  els.dropLabel.hidden = true;
+}
+
+function clearImagePreview() {
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = null;
+  }
+  els.previewImg.src = "";
+  els.imagePreview.hidden = true;
+  els.dropLabel.hidden = false;
+  els.dropLabel.textContent = "drag an image or icon here";
+  els.fileInput.value = "";
+}
+
 async function handleImageFile(file) {
-  els.dropLabel.textContent = `searching by “${file.name}”…`;
   try {
     if (!file.type.startsWith("image/")) {
       throw new Error(`"${file.name}" isn't an image DeepScan can search by`);
@@ -192,13 +158,12 @@ async function handleImageFile(file) {
     if (file.size > MAX_IMAGE_QUERY_BYTES) {
       throw new Error(`"${file.name}" is too large to search by (${Math.round(file.size / 1024 / 1024)}MB)`);
     }
+    showImagePreview(file);
     const bytes = new Uint8Array(await file.arrayBuffer());
     await search({ image_query_bytes: Array.from(bytes), scope: state.scope });
   } catch (err) {
     console.error("[DeepScan] image query failed:", err);
     setStatus(false, `image query failed: ${err.name || "Error"}: ${err.message || err}`, true);
-  } finally {
-    els.dropLabel.textContent = "drag an image or icon here";
   }
 }
 

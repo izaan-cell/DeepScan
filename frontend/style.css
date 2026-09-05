@@ -24,9 +24,15 @@ html, body {
 /* The native window is usually taller than a short/empty results state, so
    without this the whole page sits pinned to the top with a large dead gap
    below it. Centering vertically only pulls content down when there's room
-   to spare — once real results make the page taller than the window,
-   flexbox just renders from the natural top and the window scrolls, same
-   as before. */
+   to spare. Plain `center` here was a real bug: once a search actually
+   returned enough results to make the page taller than the window, plain
+   ("unsafe") centering pushes the overflow evenly above AND below the
+   viewport — and the portion pushed above the top edge falls outside the
+   browser's scrollable area entirely, so there was no way to scroll up to
+   it (this is a known flexbox gotcha, not something particular to this
+   window). `safe center` centers only while everything fits, and falls
+   back to normal top-aligned flow — fully scrollable — the moment content
+   overflows. */
 body {
   max-width: 840px;
   margin: 0 auto;
@@ -34,7 +40,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;
 }
 
 /* ---------- Masthead ---------- */
@@ -46,50 +52,6 @@ body {
   padding-bottom: 28px;
   margin-bottom: 40px;
 }
-
-.edit-menu {
-  position: absolute;
-  top: 0;
-  right: 0;
-}
-
-.edit-menu-toggle {
-  font-family: var(--serif);
-  font-size: 0.85rem;
-  background: none;
-  border: 1px solid var(--rule-strong);
-  padding: 6px 12px;
-  cursor: pointer;
-  color: var(--ink);
-}
-
-.edit-menu-toggle:hover { background: var(--ink); color: var(--paper); }
-
-.edit-menu-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  min-width: 140px;
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  box-shadow: 4px 4px 0 var(--rule);
-  z-index: 10;
-}
-
-.edit-menu-list button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font-family: var(--serif);
-  font-size: 0.85rem;
-  background: none;
-  border: none;
-  padding: 8px 14px;
-  cursor: pointer;
-  color: var(--ink);
-}
-
-.edit-menu-list button:hover { background: var(--gray-soft); }
 
 .wordmark {
   display: flex;
@@ -127,7 +89,14 @@ body {
   margin-bottom: 28px;
 }
 
+.query-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
 #queryInput {
+  flex: 1;
   width: 100%;
   resize: none;
   border: none;
@@ -143,6 +112,28 @@ body {
   color: var(--gray-mid);
   font-style: italic;
 }
+
+/* Only appears once there's actually something to send — see app.js
+   toggling [hidden] on input. A small round icon button, not a label,
+   so it reads as "submit" rather than competing with the textarea. */
+#sendButton {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  padding: 0;
+  cursor: pointer;
+}
+
+#sendButton:hover { background: var(--paper); color: var(--ink); }
 
 .input-divider {
   display: flex;
@@ -163,6 +154,7 @@ body {
 }
 
 .drop-target {
+  position: relative;
   border: 1px dashed var(--rule-strong);
   padding: 22px;
   text-align: center;
@@ -177,6 +169,42 @@ body {
   background: var(--ink);
   color: var(--paper);
 }
+
+.image-preview {
+  position: relative;
+  display: inline-block;
+  max-width: 220px;
+}
+
+.image-preview img {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper);
+}
+
+#clearImageButton {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  line-height: 1;
+  font-style: normal;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--paper);
+  cursor: pointer;
+}
+
+#clearImageButton:hover { background: var(--gray-mid); }
 
 /* ---------- Scope selector ---------- */
 
