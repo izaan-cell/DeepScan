@@ -49,6 +49,14 @@ jobs:
           ref: ${{ needs.bump-version.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
+      # Every run was compiling rust-engine's full dependency tree (ort,
+      # lancedb, tokenizers — a lot of heavy crates) completely from
+      # scratch every single time, no caching at all — a large part of
+      # why a single release build was taking 30-40+ minutes. Caches
+      # registry downloads and the target/ dir, keyed on Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-engine
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
@@ -73,6 +81,14 @@ jobs:
           ref: ${{ needs.bump-version.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
+      # Every run was compiling rust-engine's full dependency tree (ort,
+      # lancedb, tokenizers — a lot of heavy crates) completely from
+      # scratch every single time, no caching at all — a large part of
+      # why a single release build was taking 30-40+ minutes. Caches
+      # registry downloads and the target/ dir, keyed on Cargo.lock.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-engine
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
