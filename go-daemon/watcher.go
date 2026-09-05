@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 	"google.golang.org/grpc"
@@ -27,18 +28,42 @@ func NewWatcher(conn *grpc.ClientConn) (*Watcher, error) {
 	return &Watcher{fsw: fsw, client: pb.NewIndexServiceClient(conn)}, nil
 }
 
-// AddRecursive walks root and registers every subdirectory with fsnotify.
-// fsnotify only watches the exact directories it's given, so new directories
-// created later are picked up reactively inside Run.
+// Directories fsnotify has no business watching one-by-one: dependency/
+// build trees and VCS metadata can nest thousands of subdirectories (a
+// single Rust or Node project easily has 5,000+), and fsnotify needs one
+// OS-level watch handle per directory — walking into these blows through
+// the process's file descriptor limit ("too many open files"), which
+// crashes the whole daemon rather than just skipping the offending folder.
+var skipDirNames = map[string]bool{
+	"node_modules": true, "target": true, "dist": true, "build": true,
+	"vendor": true, "venv": true, "__pycache__": true, "DerivedData": true,
+}
+
+// shouldSkipDir also skips every hidden dot-directory generally (.git,
+// .cache, .npm, .Trash, ...) on top of the named build/dependency trees
+// above — hidden folders are rarely something a user wants live-watched
+// for search, and there are far more of them in practice than any fixed
+// list could name.
+func shouldSkipDir(name string) bool {
+	return skipDirNames[name] || strings.HasPrefix(name, ".")
+}
+
+// AddRecursive walks root and registers every subdirectory with fsnotify,
+// skipping the heavy/irrelevant directories listed in skipDirNames.
+// fsnotify only watches the exact directories it's given, so new
+// directories created later are picked up reactively inside Run.
 func (w *Watcher) AddRecursive(root string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable subtrees, keep scanning
 		}
-		if d.IsDir() {
-			return w.fsw.Add(path)
+		if !d.IsDir() {
+			return nil
 		}
-		return nil
+		if shouldSkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+		return w.fsw.Add(path)
 	})
 }
 
@@ -59,10 +84,14 @@ func (w *Watcher) Run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// A newly created directory needs its own watch registered.
+			// A newly created directory needs its own watch registered
+			// (unless it's one of the heavy/irrelevant ones — see
+			// skipDirNames above the same reasoning applies here).
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					_ = w.fsw.Add(event.Name)
+					if !shouldSkipDir(filepath.Base(event.Name)) {
+						_ = w.fsw.Add(event.Name)
+					}
 				}
 			}
 

@@ -1,15 +1,16 @@
 // Package main is the DeepScan background daemon: it watches configured
-// directories for changes, streams events to the Rust engine over gRPC, runs
-// the system tray icon, and provides the native "reveal in Finder/Explorer"
-// hooks the UI calls when a user picks a search result.
+// directories for changes, streams events to the Rust engine over gRPC, and
+// provides the native "reveal in Finder/Explorer" hooks the UI calls when a
+// user picks a search result.
 package main
 
 import (
 	"context"
 	"log"
+	"os"
+	"os/signal"
 	"runtime"
-
-	"github.com/getlantern/systray"
+	"syscall"
 )
 
 func main() {
@@ -48,7 +49,15 @@ func main() {
 
 	go watcher.Run(ctx)
 
-	systray.Run(onTrayReady(watcher), onTrayExit(cancel))
+	// No system tray for now — getlantern/systray's native macOS loop
+	// reliably SIGABRTs when run from this daemon's build/signing setup
+	// (a low-level cgo crash, unrecoverable via Go's recover()), taking the
+	// whole daemon down with it. A tray icon isn't worth losing file
+	// watching over; revisit as its own properly-scoped fix later.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	<-sigs
+	cancel()
 }
 
 func defaultWatchRoots() []string {
