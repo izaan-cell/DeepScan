@@ -118,8 +118,15 @@ jobs:
           # path removes the ambiguity entirely — pwd -W gives the
           # Windows-style path git-bash's own $(pwd) (POSIX-style) can't.
           stage_dir="$(pwd -W)/stage"
+          # Unversioned -ext can resolve to a different copy of the
+          # extension than the exact one `wix extension add` just pinned
+          # and installed, which is almost certainly why linking kept
+          # failing with "WixUI:WixUI_InstallDir is inaccessible due to
+          # its protection level" — that's a real symbol, just from a
+          # mismatched extension binary. Pinning the same version here
+          # guarantees the build links against the one actually installed.
           wix build packaging/windows/deepscan.wxs \
-            -ext WixToolset.UI.wixext \
+            -ext WixToolset.UI.wixext/5.0.2 \
             -d Version=${{ needs.bump-version.outputs.version }} \
             -d StageDir="$stage_dir" \
             -o dist/DeepScan.msi
