@@ -79,7 +79,7 @@ function autoGrow(textarea) {
 }
 
 async function runTextSearch(text) {
-  await search({ text_query: text, scope: state.scope });
+  await search({ text_query: text, scope: state.scope }, text);
 }
 
 // ---------- Image drop / picker ----------
@@ -160,7 +160,7 @@ async function handleImageFile(file) {
     }
     showImagePreview(file);
     const bytes = new Uint8Array(await file.arrayBuffer());
-    await search({ image_query_bytes: Array.from(bytes), scope: state.scope });
+    await search({ image_query_bytes: Array.from(bytes), scope: state.scope }, file.name);
   } catch (err) {
     console.error("[DeepScan] image query failed:", err);
     setStatus(false, `image query failed: ${err.name || "Error"}: ${err.message || err}`, true);
@@ -169,7 +169,7 @@ async function handleImageFile(file) {
 
 // ---------- Search + results ----------
 
-async function search(payload) {
+async function search(payload, queryLabel) {
   try {
     const res = await fetch(`${ENGINE_BASE}/api/search`, {
       method: "POST",
@@ -178,7 +178,7 @@ async function search(payload) {
     });
     if (!res.ok) throw new Error(`engine returned ${res.status}`);
     const data = await res.json();
-    renderResults(data.results ?? []);
+    renderResults(data.results ?? [], queryLabel);
   } catch (err) {
     console.error("[DeepScan] search failed:", err);
     // Show the real underlying error on-screen, not just a generic
@@ -188,10 +188,10 @@ async function search(payload) {
   }
 }
 
-function renderResults(results) {
+function renderResults(results, queryLabel) {
   els.resultsCanvas.innerHTML = "";
   if (results.length === 0) {
-    renderEmpty();
+    renderNoResults(queryLabel);
     return;
   }
   for (const r of results) {
@@ -226,6 +226,15 @@ function previewHtml(r) {
     return `<pre class="result-snippet">${escapeHtml(r.snippet)}</pre>`;
   }
   return "";
+}
+
+// Distinct from renderEmpty() (the pristine "haven't searched yet" state)
+// — this is what a search that actually ran and found nothing shows, and
+// it names the query so it's clear the search happened at all rather than
+// looking identical to never having searched.
+function renderNoResults(queryLabel) {
+  const label = queryLabel ? ` for "${escapeHtml(queryLabel)}"` : "";
+  els.resultsCanvas.innerHTML = `<p class="empty-state">No results found${label}.</p>`;
 }
 
 function renderEmpty() {

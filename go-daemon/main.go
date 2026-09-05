@@ -37,15 +37,32 @@ func main() {
 
 	// Directories to watch — DEEPSCAN_WATCH_ROOTS from .env.dev/.env, or
 	// the user's Documents/Desktop by default (see config.go).
+	var scanRoots []string
 	for _, root := range watchRootsFromEnv() {
 		if err := watcher.AddRecursive(root); err != nil {
 			log.Printf("warning: could not watch %s: %v", root, err)
 			continue
 		}
-		// fsnotify only reports changes from this point forward — files
-		// that already exist need this one-shot walk to ever get indexed.
-		go triggerInitialScan(ctx, conn, root)
+		scanRoots = append(scanRoots, root)
 	}
+
+	// One goroutine running all initial scans back-to-back, not one
+	// goroutine per root — the engine embeds one file at a time behind a
+	// single mutex regardless (see rust-engine/src/service.rs), so 7
+	// roots scanning "concurrently" was really 7 goroutines constantly
+	// re-contending for that same lock with no throughput benefit, and in
+	// practice this starved a live /api/search request out for minutes at
+	// a time on a large enough initial index. Scanning one root fully
+	// before starting the next means a search only ever has to wait
+	// behind a single in-flight index_file call, not seven.
+	go func() {
+		for _, root := range scanRoots {
+			// fsnotify only reports changes from this point forward —
+			// files that already exist need this one-shot walk to ever
+			// get indexed.
+			triggerInitialScan(ctx, conn, root)
+		}
+	}()
 
 	go watcher.Run(ctx)
 

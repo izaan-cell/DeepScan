@@ -19,29 +19,41 @@ use tonic::{Request, Response, Status, Streaming};
 /// Common shape for both of IndexService's streaming responses.
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
-/// Files/dirs that mark a directory as the root of a software project
-/// rather than a folder of the user's own documents/photos — a plain
-/// `ignore`-crate walk respects `.gitignore` but still happily indexes a
-/// project's *tracked* files (source, committed assets like a DMG
-/// background PNG, etc.), which is how DeepScan's own repo living on
-/// ~/Desktop ended up polluting real searches with its own source files.
-/// Skipping any subtree with one of these markers keeps default watch
-/// roots (Desktop/Documents/Downloads/...) scoped to actual user content.
-const PROJECT_MARKERS: &[&str] = &[
-    ".git", "Cargo.toml", "go.mod", "package.json", "pom.xml", "pyproject.toml", "Gemfile", "composer.json",
-    "CMakeLists.txt",
-];
+/// App bundles (.app) and Xcode project/workspace packages are
+/// directories too, and their insides are exclusively build output /
+/// executables / plist metadata — never something the user "input", so
+/// these are always excluded regardless of what's inside them.
+///
+/// This used to also exclude any directory containing a `.git`,
+/// `package.json`, `Cargo.toml`, etc. (anything that looked like "a
+/// software project") to keep DeepScan's own repo from polluting search
+/// with its own source files. That was too broad: it excluded *every*
+/// git-tracked project wholesale, including the user's own real code
+/// (their own repos on Desktop), which defeats code search entirely — the
+/// actual problem was one specific repo (this one), not "any repo
+/// anywhere". The skipDirNames list below (node_modules, target, dist,
+/// build, vendor, venv, __pycache__, DerivedData) already excludes the
+/// actual build/dependency noise regardless of which project it's in.
+/// Mirrors go-daemon/watcher.go's skipDirNames — `.gitignore`-respect
+/// alone only excludes these if a given project actually lists them,
+/// which isn't guaranteed (no `.gitignore` at all, or an incomplete one).
+const SKIP_DIR_NAMES: &[&str] =
+    &["node_modules", "target", "dist", "build", "vendor", "venv", "__pycache__", "DerivedData"];
+
+/// Directory *extensions* (not names) that mark a macOS package/bundle —
+/// a folder the Finder shows and treats as a single opaque file, but that
+/// a plain filesystem walk happily descends into. `Photos Library
+/// .photoslibrary` is the motivating case: it's a bundle containing
+/// thousands of internal cache/thumbnail/database files, none of which
+/// are "a file the user input" — walking into it both pollutes search
+/// with cache internals and is genuinely slow (thousands of individual
+/// files to categorize and embed one at a time).
+const BUNDLE_EXTENSIONS: &[&str] =
+    &[".app", ".xcodeproj", ".xcworkspace", ".photoslibrary", ".pages", ".key", ".numbers", ".rtfd"];
 
 fn is_software_project_dir(dir: &Path) -> bool {
-    // App bundles (.app) and Xcode project/workspace packages are
-    // directories too, and their insides are exclusively build output /
-    // executables / plist metadata — never something the user "input".
-    if let Some(name) = dir.file_name().map(|n| n.to_string_lossy()) {
-        if name.ends_with(".app") || name.ends_with(".xcodeproj") || name.ends_with(".xcworkspace") {
-            return true;
-        }
-    }
-    PROJECT_MARKERS.iter().any(|m| dir.join(m).exists())
+    let Some(name) = dir.file_name().map(|n| n.to_string_lossy()) else { return false };
+    BUNDLE_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) || SKIP_DIR_NAMES.contains(&name.as_ref())
 }
 
 pub struct ScoredFile {

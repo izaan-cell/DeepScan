@@ -48,29 +48,34 @@ func shouldSkipDir(name string) bool {
 	return skipDirNames[name] || strings.HasPrefix(name, ".")
 }
 
-// projectMarkerFiles sit directly inside the root of a software project
-// (or its VCS metadata), not a folder of the user's own documents/photos.
-// Watching (and later indexing) an entire dev project that happens to live
-// on the Desktop or in Documents was exactly what caused DeepScan's own
-// source tree — frontend/app.js, packaging assets like a DMG background
-// PNG — to show up in place of, or alongside, the user's real files.
-var projectMarkerFiles = []string{
-	".git", "Cargo.toml", "go.mod", "package.json", "pom.xml",
-	"pyproject.toml", "Gemfile", "composer.json", "CMakeLists.txt",
+// isSoftwareProjectDir reports whether dir is an app bundle rather than
+// user content — its insides are exclusively executables/plist metadata,
+// never something a user placed there themselves, so it's excluded
+// wholesale regardless of what's inside it.
+//
+// This used to also treat any directory containing a `.git`,
+// `package.json`, `Cargo.toml`, etc. as "a software project" and exclude
+// the whole thing — the actual goal was keeping DeepScan's own source
+// tree out of search, but checking for "looks like any software project"
+// excluded every git-tracked project wholesale, including the user's own
+// real code repos, which defeats code search entirely. shouldSkipDir
+// above already excludes the actual build/dependency noise
+// (node_modules, dist, etc.) regardless of which project it's in.
+// bundleExtensions are macOS package/bundle directory extensions — a
+// folder Finder shows and treats as a single opaque file, but a plain
+// filesystem walk happily descends into. `Photos Library.photoslibrary`
+// is the motivating case: a bundle containing thousands of internal
+// cache/thumbnail/database files, none of which are "a file the user
+// input" — walking into it both pollutes search with cache internals and
+// is genuinely slow (thousands of individual files to watch one by one).
+var bundleExtensions = []string{
+	".app", ".xcodeproj", ".xcworkspace", ".photoslibrary", ".pages", ".key", ".numbers", ".rtfd",
 }
 
-// isSoftwareProjectDir reports whether dir is the root of a software
-// project/app-bundle rather than user content. Callers skip these
-// entirely rather than descending in — an .app bundle's insides are
-// exclusively executables/plist metadata, never something a user placed
-// there themselves.
 func isSoftwareProjectDir(dir string) bool {
 	base := filepath.Base(dir)
-	if strings.HasSuffix(base, ".app") || strings.HasSuffix(base, ".xcodeproj") || strings.HasSuffix(base, ".xcworkspace") {
-		return true
-	}
-	for _, marker := range projectMarkerFiles {
-		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+	for _, ext := range bundleExtensions {
+		if strings.HasSuffix(base, ext) {
 			return true
 		}
 	}
