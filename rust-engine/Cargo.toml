@@ -25,15 +25,35 @@ futures = "0.3"
 tonic = "0.12"
 prost = "0.13"
 
-# ONNX Runtime bindings — local CLIP / MiniLM / Jina-Code inference
-ort = { version = "2.0.0-rc.4", features = ["download-binaries"] }
-ndarray = "0.16"
+# ONNX Runtime bindings — local CLIP / MiniLM / Jina-Code inference.
+# Exact-pinned: later 2.0.0-rc.x releases changed the tensor-extraction and
+# error-type APIs enough to break the code below against a loose "rc.4"
+# range resolving forward to "rc.13".
+ort = { version = "=2.0.0-rc.4", features = ["download-binaries"] }
+# ort's own Cargo.toml requires ort-sys "2.0.0-rc.4" via a caret (not exact)
+# range, which Cargo happily satisfies with the newer rc.13 — but rc.13's
+# ort-sys build script added a hard TLS-backend requirement that breaks the
+# download-binaries build. Exact-pinning it directly here forces the whole
+# graph down to the matched pair.
+ort-sys = "=2.0.0-rc.4"
+# Must match the ndarray version ort itself depends on (0.15) — the
+# IntoValueTensor trait ort::Value::from_array requires is only implemented
+# for that exact crate instance, not a same-shaped type from a different
+# semver-incompatible ndarray version.
+ndarray = "0.15"
 tokenizers = "0.20"
 
-# Embedded vector database
-lancedb = "0.38"
-arrow-array = "55"
-arrow-schema = "55"
+# Embedded vector database. "remote" feature enabled purely as a workaround
+# for an upstream bug in lancedb 0.38.0 (job.rs references Error::Http
+# unconditionally, but that variant is #[cfg(feature = "remote")]-gated in
+# error.rs — without it the crate itself fails to compile). We don't use
+# LanceDB Cloud/remote connections; this is local-only.
+lancedb = { version = "0.38", features = ["remote"] }
+# Arrow types come from lancedb::arrow's re-exports (db.rs), not separate
+# direct deps — lancedb links its own pinned arrow version internally, and
+# a second, independently-versioned arrow-array/arrow-schema dependency
+# produced duplicate-crate type mismatches (Schema != Schema) everywhere
+# a RecordBatch crossed the lancedb API boundary.
 
 # File type routing / traversal
 walkdir = "2"

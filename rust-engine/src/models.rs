@@ -11,8 +11,7 @@
 
 use anyhow::{Context, Result};
 use ndarray::{Array4, CowArray};
-use ort::session::Session;
-use ort::value::Value;
+use ort::{Session, Value};
 use std::path::Path;
 use tokenizers::Tokenizer;
 
@@ -112,8 +111,8 @@ fn embed_with_tokenizer(session: &mut Session, tokenizer: &Tokenizer, text: &str
     let ids_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), ids)?).into_dyn();
     let mask_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, seq_len), mask.clone())?).into_dyn();
 
-    let input_ids = Value::from_array(ids_arr)?;
-    let attention_mask = Value::from_array(mask_arr)?;
+    let input_ids = Value::from_array(&ids_arr)?;
+    let attention_mask = Value::from_array(&mask_arr)?;
 
     let outputs = session.run(ort::inputs![
         "input_ids" => input_ids,

@@ -2,12 +2,12 @@
 //! column and the 384-d text column, per docs/ARCHITECTURE.md #3.
 
 use anyhow::Result;
-use arrow_array::{
-    types::Float32Type, FixedSizeListArray, Int64Array, RecordBatch, RecordBatchIterator,
-    StringArray,
-};
-use arrow_schema::{DataType, Field, Fields, Schema};
 use futures::TryStreamExt;
+use lancedb::arrow::arrow_array::{
+    self, types::Float32Type, FixedSizeListArray, Int64Array, RecordBatch, RecordBatchIterator,
+    RecordBatchReader, StringArray,
+};
+use lancedb::arrow::arrow_schema::{DataType, Field, Fields, Schema};
 use lancedb::connection::Connection;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use std::path::Path;
@@ -67,7 +67,10 @@ impl VectorStore {
         let batch = rows_to_batch(&schema, &rows)?;
         let table = self.conn.open_table(TABLE).execute().await?;
         let reader = RecordBatchIterator::new(vec![Ok(batch)], schema);
-        table.add(Box::new(reader)).execute().await?;
+        table
+            .add(Box::new(reader) as Box<dyn RecordBatchReader + Send>)
+            .execute()
+            .await?;
         Ok(())
     }
 

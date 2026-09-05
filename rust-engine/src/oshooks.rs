@@ -4,7 +4,9 @@
 //! the daemon's copy remains for parity if a future native-client path
 //! calls IndexService/SearchService directly instead of the HTTP shim.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+use anyhow::bail;
 use std::process::Command;
 
 pub fn reveal(path: &str) -> Result<()> {

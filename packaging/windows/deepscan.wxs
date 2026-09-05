@@ -23,6 +23,14 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of DeepScan is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Standard Windows installer wizard: Welcome -> License -> Choose
+         Install Directory -> Progress -> Finish, same shape as any normal
+         desktop app's MSI. Requires `wix build ... -ext
+         WixToolset.UI.wixext` (see .github/workflows/release.yml). -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_InstallDir" />
+    <WixVariable Id="WixUILicenseRtf" Value="packaging\windows\license.rtf" />
+
     <Feature Id="Main" Title="DeepScan" Level="1">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="StartMenuShortcut" />

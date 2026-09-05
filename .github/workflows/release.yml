@@ -94,12 +94,14 @@ jobs:
           cp packaging/windows/launcher.ps1 stage/
 
       - run: dotnet tool install --global wix
+      - run: wix extension add WixToolset.UI.wixext
 
       - name: Build DeepScan.msi
         shell: bash
         run: |
           mkdir -p dist
           wix build packaging/windows/deepscan.wxs \
+            -ext WixToolset.UI.wixext \
             -d Version=${{ needs.bump-version.outputs.version }} \
             -o dist/DeepScan.msi
 
