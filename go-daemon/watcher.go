@@ -48,8 +48,39 @@ func shouldSkipDir(name string) bool {
 	return skipDirNames[name] || strings.HasPrefix(name, ".")
 }
 
+// projectMarkerFiles sit directly inside the root of a software project
+// (or its VCS metadata), not a folder of the user's own documents/photos.
+// Watching (and later indexing) an entire dev project that happens to live
+// on the Desktop or in Documents was exactly what caused DeepScan's own
+// source tree — frontend/app.js, packaging assets like a DMG background
+// PNG — to show up in place of, or alongside, the user's real files.
+var projectMarkerFiles = []string{
+	".git", "Cargo.toml", "go.mod", "package.json", "pom.xml",
+	"pyproject.toml", "Gemfile", "composer.json", "CMakeLists.txt",
+}
+
+// isSoftwareProjectDir reports whether dir is the root of a software
+// project/app-bundle rather than user content. Callers skip these
+// entirely rather than descending in — an .app bundle's insides are
+// exclusively executables/plist metadata, never something a user placed
+// there themselves.
+func isSoftwareProjectDir(dir string) bool {
+	base := filepath.Base(dir)
+	if strings.HasSuffix(base, ".app") || strings.HasSuffix(base, ".xcodeproj") || strings.HasSuffix(base, ".xcworkspace") {
+		return true
+	}
+	for _, marker := range projectMarkerFiles {
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // AddRecursive walks root and registers every subdirectory with fsnotify,
-// skipping the heavy/irrelevant directories listed in skipDirNames.
+// skipping the heavy/irrelevant directories listed in skipDirNames and any
+// nested software-project directory (see isSoftwareProjectDir) — except
+// root itself, so explicitly watching a code project still works.
 // fsnotify only watches the exact directories it's given, so new
 // directories created later are picked up reactively inside Run.
 func (w *Watcher) AddRecursive(root string) error {
@@ -61,6 +92,9 @@ func (w *Watcher) AddRecursive(root string) error {
 			return nil
 		}
 		if shouldSkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+		if path != root && isSoftwareProjectDir(path) {
 			return filepath.SkipDir
 		}
 		return w.fsw.Add(path)
@@ -89,7 +123,7 @@ func (w *Watcher) Run(ctx context.Context) {
 			// skipDirNames above the same reasoning applies here).
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					if !shouldSkipDir(filepath.Base(event.Name)) {
+					if !shouldSkipDir(filepath.Base(event.Name)) && !isSoftwareProjectDir(event.Name) {
 						_ = w.fsw.Add(event.Name)
 					}
 				}

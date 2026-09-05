@@ -19,6 +19,31 @@ use tonic::{Request, Response, Status, Streaming};
 /// Common shape for both of IndexService's streaming responses.
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
+/// Files/dirs that mark a directory as the root of a software project
+/// rather than a folder of the user's own documents/photos — a plain
+/// `ignore`-crate walk respects `.gitignore` but still happily indexes a
+/// project's *tracked* files (source, committed assets like a DMG
+/// background PNG, etc.), which is how DeepScan's own repo living on
+/// ~/Desktop ended up polluting real searches with its own source files.
+/// Skipping any subtree with one of these markers keeps default watch
+/// roots (Desktop/Documents/Downloads/...) scoped to actual user content.
+const PROJECT_MARKERS: &[&str] = &[
+    ".git", "Cargo.toml", "go.mod", "package.json", "pom.xml", "pyproject.toml", "Gemfile", "composer.json",
+    "CMakeLists.txt",
+];
+
+fn is_software_project_dir(dir: &Path) -> bool {
+    // App bundles (.app) and Xcode project/workspace packages are
+    // directories too, and their insides are exclusively build output /
+    // executables / plist metadata — never something the user "input".
+    if let Some(name) = dir.file_name().map(|n| n.to_string_lossy()) {
+        if name.ends_with(".app") || name.ends_with(".xcodeproj") || name.ends_with(".xcworkspace") {
+            return true;
+        }
+    }
+    PROJECT_MARKERS.iter().any(|m| dir.join(m).exists())
+}
+
 pub struct ScoredFile {
     pub path: String,
     pub category: String,
@@ -309,6 +334,15 @@ impl IndexService for IndexSvc {
             if !req.recursive {
                 walk.max_depth(Some(1));
             }
+            // Never prune the root itself (depth 0) — a user who explicitly
+            // points DeepScan at a code project still gets it indexed;
+            // this only excludes project directories *encountered while
+            // walking* a broader root like Desktop or Downloads.
+            walk.filter_entry(|entry| {
+                entry.depth() == 0
+                    || !entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    || !is_software_project_dir(entry.path())
+            });
 
             let mut files_scanned = 0i64;
             let mut files_indexed = 0i64;

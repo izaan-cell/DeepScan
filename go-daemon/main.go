@@ -60,13 +60,30 @@ func main() {
 	cancel()
 }
 
+// The default scope: every common place a user's own files actually live,
+// not just Desktop/Documents (which missed real content in ~/Downloads
+// entirely — an image search for a file the user had just downloaded found
+// nothing there and surfaced unrelated matches from elsewhere in the index
+// instead). Applications is included so app bundles show up too, but see
+// isSoftwareProjectDir — the walk never descends *into* a .app, only notes
+// its presence.
 func defaultWatchRoots() []string {
 	home, err := userHomeDir()
 	if err != nil {
 		return nil
 	}
 	if runtime.GOOS == "windows" {
-		return []string{home + `\Documents`, home + `\Desktop`}
+		return []string{
+			home + `\Desktop`, home + `\Documents`, home + `\Downloads`,
+			home + `\Pictures`, home + `\Videos`, home + `\Music`,
+		}
 	}
-	return []string{home + "/Documents", home + "/Desktop"}
+	if runtime.GOOS == "darwin" {
+		return []string{
+			home + "/Desktop", home + "/Documents", home + "/Downloads",
+			home + "/Pictures", home + "/Movies", home + "/Music",
+			"/Applications",
+		}
+	}
+	return []string{home + "/Desktop", home + "/Documents", home + "/Downloads"}
 }
