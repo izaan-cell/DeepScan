@@ -34,6 +34,17 @@ func repoRoot(name string) string {
 	return filepath.Join("..", name)
 }
 
+// dataDir mirrors rust-engine/src/config.rs's own DEEPSCAN_DATA_DIR
+// resolution exactly, so both processes agree on where engine.lock lives
+// regardless of dev vs. production mode.
+func dataDir() string {
+	raw := os.Getenv("DEEPSCAN_DATA_DIR")
+	if raw == "" {
+		raw = "~/.deepscan"
+	}
+	return resolvePath(raw)
+}
+
 func watchRootsFromEnv() []string {
 	raw := os.Getenv("DEEPSCAN_WATCH_ROOTS")
 	if raw == "" {

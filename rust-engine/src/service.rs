@@ -8,9 +8,16 @@ use crate::pb::search_service_server::SearchService;
 use crate::pb::*;
 use crate::router::{self, ExtractionPlan};
 use crate::EngineState;
+use futures::{Stream, StreamExt};
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
+
+/// Common shape for both of IndexService's streaming responses.
+type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
 pub struct ScoredFile {
     pub path: String,
@@ -20,7 +27,9 @@ pub struct ScoredFile {
 }
 
 /// Platform-agnostic core: no gRPC/HTTP types in here, so it's trivially
-/// reusable from both transports.
+/// reusable from both transports. Clone is cheap (just an Arc bump) — used
+/// to hand a copy into spawned tasks for streaming RPC handlers.
+#[derive(Clone)]
 pub struct Core {
     state: Arc<EngineState>,
 }
@@ -231,35 +240,120 @@ impl IndexSvc {
 
 #[tonic::async_trait]
 impl IndexService for IndexSvc {
-    type WatchEventsStream = tonic::codec::Streaming<IndexAck>;
+    type WatchEventsStream = ResponseStream<IndexAck>;
 
+    /// The Go daemon's long-lived side of this call streams one FsEvent per
+    /// filesystem change; each gets embedded + upserted (or deleted) here
+    /// and acked back. Runs in a spawned task so the stream can be returned
+    /// immediately, per tonic's bidi-streaming pattern.
     async fn watch_events(
         &self,
-        _request: Request<Streaming<FsEvent>>,
+        request: Request<Streaming<FsEvent>>,
     ) -> Result<Response<Self::WatchEventsStream>, Status> {
-        // The bidirectional-stream signature this generates expects a
-        // Streaming<IndexAck> response type from tonic's server codegen,
-        // which in practice is produced by tonic::codec::Streaming wrapping
-        // an internal channel — wiring that plumbing (spawn a task reading
-        // `_request.into_inner()`, calling `self.core.index_file` /
-        // `delete_file` per event, replying with IndexAck on an mpsc
-        // channel converted via ReceiverStream) is the one piece left as a
-        // TODO at this scaffold boundary; `index_path` below shows the same
-        // per-file logic in the simpler unary-request/streaming-response
-        // shape.
-        Err(Status::unimplemented(
-            "watch_events: see comment — index_file/delete_file are ready, only the stream plumbing is left",
-        ))
+        let mut in_stream = request.into_inner();
+        let core = self.core.clone();
+        let (tx, rx) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            while let Some(event) = in_stream.next().await {
+                let event = match event {
+                    Ok(e) => e,
+                    Err(e) => {
+                        let _ = tx.send(Err(Status::internal(e.to_string()))).await;
+                        break;
+                    }
+                };
+                let Some(file) = event.file.clone() else { continue };
+                let path = std::path::PathBuf::from(&file.path);
+
+                let result = match event.kind() {
+                    ChangeKind::Deleted => core.delete_file(&file.path).await,
+                    ChangeKind::Renamed => {
+                        if !event.renamed_from.is_empty() {
+                            let _ = core.delete_file(&event.renamed_from).await;
+                        }
+                        core.index_file(&path).await
+                    }
+                    ChangeKind::Created | ChangeKind::Modified => core.index_file(&path).await,
+                    ChangeKind::Unspecified => Ok(()),
+                };
+
+                let ack = match result {
+                    Ok(()) => IndexAck { path: file.path, accepted: true, error: String::new() },
+                    Err(e) => IndexAck { path: file.path, accepted: false, error: e.to_string() },
+                };
+                if tx.send(Ok(ack)).await.is_err() {
+                    break; // daemon disconnected
+                }
+            }
+        });
+
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 
-    type IndexPathStream = tonic::codec::Streaming<IndexProgress>;
+    type IndexPathStream = ResponseStream<IndexProgress>;
 
+    /// One-shot recursive scan of a directory the user just added (or the
+    /// daemon's initial startup scan) — respects .gitignore-style rules via
+    /// the `ignore` crate, same as router.rs's traversal design intent.
     async fn index_path(
         &self,
         request: Request<IndexPathRequest>,
     ) -> Result<Response<Self::IndexPathStream>, Status> {
-        let _ = request;
-        Err(Status::unimplemented("index_path: see http::index_path_http for the working equivalent"))
+        let req = request.into_inner();
+        let core = self.core.clone();
+        let (tx, rx) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut walk = ignore::WalkBuilder::new(&req.root_path);
+            if !req.recursive {
+                walk.max_depth(Some(1));
+            }
+
+            let mut files_scanned = 0i64;
+            let mut files_indexed = 0i64;
+            let mut files_skipped = 0i64;
+
+            for entry in walk.build() {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
+
+                files_scanned += 1;
+                let path = entry.path().to_path_buf();
+                match core.index_file(&path).await {
+                    Ok(()) => files_indexed += 1,
+                    Err(_) => files_skipped += 1,
+                }
+
+                let progress = IndexProgress {
+                    files_scanned,
+                    files_indexed,
+                    files_skipped,
+                    current_path: path.to_string_lossy().into_owned(),
+                    done: false,
+                };
+                if tx.send(Ok(progress)).await.is_err() {
+                    return;
+                }
+            }
+
+            let _ = tx
+                .send(Ok(IndexProgress {
+                    files_scanned,
+                    files_indexed,
+                    files_skipped,
+                    current_path: String::new(),
+                    done: true,
+                }))
+                .await;
+        });
+
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 
     async fn get_index_status(&self, _request: Request<Empty>) -> Result<Response<IndexStatus>, Status> {

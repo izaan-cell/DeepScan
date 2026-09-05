@@ -49,7 +49,21 @@ fi
 # DEEPSCAN_ENGINE_HTTP_PORT isn't set here, so this matches config.rs's own
 # default (51424) exactly — engine.lock only records the gRPC port, not
 # this one, so reading HTTP_PORT from it would grab the wrong value.
-open "http://127.0.0.1:51424"
+#
+# Chrome's --app= mode opens a standalone window with no address bar/tabs
+# instead of a normal browser tab, so DeepScan feels like its own app. A
+# dedicated --user-data-dir keeps this profile separate from the user's
+# regular Chrome session. Falls back to the default browser (a normal tab)
+# if Chrome isn't installed.
+CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+if [ -x "$CHROME_APP" ]; then
+  "$CHROME_APP" \
+    --app="http://127.0.0.1:51424" \
+    --user-data-dir="$HOME/.deepscan/chrome-app-profile" \
+    > /dev/null 2>&1 &
+else
+  open "http://127.0.0.1:51424"
+fi
 
 cleanup() {
   kill "$ENGINE_PID" "$DAEMON_PID" "${PARSER_PID:-}" 2>/dev/null || true

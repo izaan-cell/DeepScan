@@ -15,14 +15,12 @@ type engineLock struct {
 	PID  int `json:"pid"`
 }
 
-// readEngineLock reads ~/.deepscan/engine.lock, written by the Rust engine
-// on startup (see rust-engine/src/main.rs), and returns its loopback address.
+// readEngineLock reads engine.lock, written by the Rust engine on startup
+// (see rust-engine/src/main.rs's write_lockfile, and config.rs for the
+// matching DEEPSCAN_DATA_DIR resolution this mirrors), and returns its
+// loopback address.
 func readEngineLock() (string, error) {
-	home, err := userHomeDir()
-	if err != nil {
-		return "", err
-	}
-	raw, err := os.ReadFile(filepath.Join(home, ".deepscan", "engine.lock"))
+	raw, err := os.ReadFile(filepath.Join(dataDir(), "engine.lock"))
 	if err != nil {
 		return "", fmt.Errorf("engine.lock not found — is the DeepScan engine running? %w", err)
 	}

@@ -42,6 +42,25 @@ if ((Test-Path $parserJar) -and (Test-Path $jre)) {
 # DEEPSCAN_ENGINE_HTTP_PORT isn't set here, so this matches config.rs's own
 # default (51424) exactly — engine.lock only records the gRPC port, not
 # this one, so reading the port from it would grab the wrong value.
-Start-Process "http://127.0.0.1:51424"
+#
+# Chrome's --app= mode opens a standalone window with no address bar/tabs
+# instead of a normal browser tab, so DeepScan feels like its own app. A
+# dedicated --user-data-dir keeps this profile separate from the user's
+# regular Chrome session. Falls back to the default browser (a normal tab)
+# if Chrome isn't installed at either common location.
+$chromePaths = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+)
+$chrome = $chromePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if ($chrome) {
+    Start-Process -FilePath $chrome -ArgumentList `
+        "--app=http://127.0.0.1:51424", `
+        "--user-data-dir=$env:USERPROFILE\.deepscan\chrome-app-profile"
+} else {
+    Start-Process "http://127.0.0.1:51424"
+}
 
 Wait-Process -Id $engine.Id

@@ -39,7 +39,11 @@ func main() {
 	for _, root := range watchRootsFromEnv() {
 		if err := watcher.AddRecursive(root); err != nil {
 			log.Printf("warning: could not watch %s: %v", root, err)
+			continue
 		}
+		// fsnotify only reports changes from this point forward — files
+		// that already exist need this one-shot walk to ever get indexed.
+		go triggerInitialScan(ctx, conn, root)
 	}
 
 	go watcher.Run(ctx)
