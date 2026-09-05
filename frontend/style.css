@@ -135,6 +135,14 @@ body {
 
 #sendButton:hover { background: var(--paper); color: var(--ink); }
 
+/* Same specificity trap as .image-preview above, but worse: an ID
+   selector's display:flex beats [hidden]'s display:none outright, so the
+   button was actually visible from the very first load regardless of
+   whether the query box had anything typed in it. */
+#sendButton[hidden] {
+  display: none;
+}
+
 .input-divider {
   display: flex;
   align-items: center;
@@ -174,6 +182,15 @@ body {
   position: relative;
   display: inline-block;
   max-width: 220px;
+}
+
+/* [hidden] and .image-preview{display:inline-block} are equal-specificity
+   class/attribute selectors, so without this the later rule above just
+   wins outright and setting el.hidden = true does nothing visible — the
+   (now-blank) preview box stayed on screen after Clear instead of actually
+   disappearing. */
+.image-preview[hidden] {
+  display: none;
 }
 
 .image-preview img {
