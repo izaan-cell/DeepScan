@@ -93,8 +93,13 @@ jobs:
           cp -r frontend stage/frontend
           cp packaging/windows/launcher.ps1 stage/
 
-      - run: dotnet tool install --global wix
-      - run: wix extension add WixToolset.UI.wixext
+      # Pinned to 5.0.2: WiX v6/v7 introduced an "Open Source Maintenance
+      # Fee" EULA that must be accepted interactively, which breaks an
+      # unattended CI install. v5 predates that requirement and is what
+      # packaging/windows/deepscan.wxs was written against anyway (the v4
+      # schema namespace WiX v5 intentionally kept for backward compat).
+      - run: dotnet tool install --global wix --version 5.0.2
+      - run: wix extension add WixToolset.UI.wixext/5.0.2
 
       - name: Build DeepScan.msi
         shell: bash

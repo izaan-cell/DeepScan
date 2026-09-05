@@ -25,6 +25,10 @@ parser.lock
 .env
 .env.local
 
+# Local build output (packaged installers) — never committed; these are
+# what the Releases page is for, not git history.
+dist/
+
 # OS
 .DS_Store
 Thumbs.db
