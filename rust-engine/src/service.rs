@@ -185,6 +185,18 @@ impl Core {
     pub async fn delete_file(&self, path: &str) -> anyhow::Result<()> {
         self.state.db.delete_path(path).await
     }
+
+    /// Reads a file's bytes for the result-card preview (thumbnail image,
+    /// or the same snippet text search already surfaces) — but only for a
+    /// path DeepScan itself indexed. See db::VectorStore::is_indexed_path
+    /// for why: this is the one HTTP endpoint that returns raw file
+    /// contents, so it must never become "read any path a caller names".
+    pub async fn read_indexed_file(&self, path: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.state.db.is_indexed_path(path).await?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(tokio::fs::read(path).await?))
+    }
 }
 
 fn to_scored_file(row: crate::db::ScoredRow) -> ScoredFile {

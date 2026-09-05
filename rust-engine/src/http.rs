@@ -10,8 +10,8 @@
 use crate::config::Mode;
 use crate::service::Core;
 use crate::EngineState;
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Query, State};
+use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -30,17 +30,26 @@ struct AppState {
 pub async fn serve(engine_state: Option<Arc<EngineState>>, mode: Mode, addr: SocketAddr) -> anyhow::Result<()> {
     let state = AppState { core: engine_state.map(|s| Arc::new(Core::new(s))) };
 
+    // Permissive CORS is only actually needed in Cloud mode, where the
+    // Render-hosted UI shell (a different origin) fetches this engine. In
+    // Local mode the frontend is served from this same origin, and one of
+    // these routes (/api/thumbnail) returns raw file bytes — permissive
+    // CORS there would let *any* webpage the user has open probe/read
+    // files DeepScan has indexed just by the user having the app running.
+    let cors = match mode {
+        Mode::Cloud => CorsLayer::permissive(),
+        Mode::Local => CorsLayer::new(),
+    };
+
     let app = Router::new()
         .route("/api/status", get(status))
         .route("/api/search", post(search))
         .route("/api/reveal", post(reveal))
+        .route("/api/thumbnail", get(thumbnail))
         .fallback_service(ServeDir::new(frontend_dir()))
-        .layer(CorsLayer::permissive()) // loopback-only in Local mode; the Render-hosted
-        // shell in Cloud mode legitimately needs to be fetched from a different origin
-        // than the local engine it talks to.
+        .layer(cors)
         .with_state(state);
 
-    let _ = mode;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -179,5 +188,50 @@ async fn reveal(State(state): State<AppState>, Json(body): Json<RevealBody>) -> 
     match crate::oshooks::reveal(&body.path) {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ThumbnailQuery {
+    path: String,
+}
+
+// A result card's image preview needs actual bytes, not just metadata —
+// this is the one endpoint that serves raw file contents, so it's the one
+// endpoint that matters most for CORS/path-scoping (see the `cors` setup
+// in `serve` and `Core::read_indexed_file`'s own doc comment).
+const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
+
+async fn thumbnail(State(state): State<AppState>, Query(q): Query<ThumbnailQuery>) -> impl IntoResponse {
+    let Some(core) = state.core.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no local engine attached").into_response();
+    };
+
+    match tokio::fs::metadata(&q.path).await {
+        Ok(meta) if meta.len() > MAX_PREVIEW_BYTES => {
+            return (StatusCode::PAYLOAD_TOO_LARGE, "file too large to preview").into_response();
+        }
+        _ => {}
+    }
+
+    match core.read_indexed_file(&q.path).await {
+        Ok(Some(bytes)) => ([(header::CONTENT_TYPE, mime_for_path(&q.path))], bytes).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "not an indexed file").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn mime_for_path(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "tif" | "tiff" => "image/tiff",
+        "heic" | "heif" => "image/heic",
+        _ => "application/octet-stream",
     }
 }

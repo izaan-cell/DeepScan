@@ -80,6 +80,29 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Confirms `path` is a row DeepScan itself indexed, and returns its
+    /// category if so. Used to gate the thumbnail/preview endpoint — the
+    /// HTTP API has permissive CORS for the Cloud-mode UI shell (see
+    /// http.rs), so serving raw file bytes for *any* path a caller names
+    /// would turn a local search tool into an arbitrary-file-read primitive
+    /// reachable from any webpage the user has open. Requiring the path to
+    /// already be a row we indexed keeps it scoped to "files DeepScan
+    /// already scanned", not the whole filesystem.
+    pub async fn is_indexed_path(&self, path: &str) -> Result<Option<String>> {
+        let table = self.conn.open_table(TABLE).execute().await?;
+        let escaped = path.replace('\'', "''");
+        let mut stream = table.query().only_if(format!("path = '{escaped}'")).limit(1).execute().await?;
+        while let Some(batch) = stream.try_next().await? {
+            let categories = batch.column_by_name("category").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            if let Some(categories) = categories {
+                if batch.num_rows() > 0 {
+                    return Ok(Some(categories.value(0).to_string()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn delete_path(&self, path: &str) -> Result<()> {
         let table = self.conn.open_table(TABLE).execute().await?;
         let escaped = path.replace('\'', "''");

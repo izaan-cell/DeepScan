@@ -100,11 +100,30 @@ els.fileInput.addEventListener("change", () => {
   if (file) handleImageFile(file);
 });
 
+// A dropped .app (or any other folder) isn't a real single file — the
+// browser hands over a File object for it, but reading its bytes either
+// throws or silently returns nothing useful. Without a guard here, that
+// left the UI stuck on "searching by X…" forever with no error shown,
+// since nothing ever caught it.
+const MAX_IMAGE_QUERY_BYTES = 25 * 1024 * 1024;
+
 async function handleImageFile(file) {
   els.dropLabel.textContent = `searching by “${file.name}”…`;
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  await search({ image_query_bytes: Array.from(bytes), scope: state.scope });
-  els.dropLabel.textContent = "drag an image or icon here";
+  try {
+    if (!file.type.startsWith("image/")) {
+      throw new Error(`"${file.name}" isn't an image DeepScan can search by`);
+    }
+    if (file.size > MAX_IMAGE_QUERY_BYTES) {
+      throw new Error(`"${file.name}" is too large to search by (${Math.round(file.size / 1024 / 1024)}MB)`);
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await search({ image_query_bytes: Array.from(bytes), scope: state.scope });
+  } catch (err) {
+    console.error("[DeepScan] image query failed:", err);
+    setStatus(false, `image query failed: ${err.name || "Error"}: ${err.message || err}`, true);
+  } finally {
+    els.dropLabel.textContent = "drag an image or icon here";
+  }
 }
 
 // ---------- Search + results ----------
@@ -124,7 +143,7 @@ async function search(payload) {
     // Show the real underlying error on-screen, not just a generic
     // message — there's no way to open dev tools quickly on this native
     // window, so this is the only way to actually see what broke.
-    setStatus(false, `search failed: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`);
+    setStatus(false, `search failed: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`, true);
   }
 }
 
@@ -139,6 +158,7 @@ function renderResults(results) {
     card.className = "result-card";
     card.innerHTML = `
       <div class="file-category">${escapeHtml(r.category)}</div>
+      ${previewHtml(r)}
       <div class="file-name">${escapeHtml(basename(r.path))}</div>
       <div class="file-path">${escapeHtml(r.path)}</div>
       <button class="reveal-action">reveal in ${platformFileManagerName()}</button>
@@ -149,6 +169,22 @@ function renderResults(results) {
     });
     els.resultsCanvas.appendChild(card);
   }
+}
+
+// A result card should show enough of the actual file to recognize it at a
+// glance without opening it: a real thumbnail for images (fetched from the
+// engine's own indexed-files-only /api/thumbnail — see http.rs), or the
+// text/code snippet the engine already extracted and returned alongside
+// the search result for everything else.
+function previewHtml(r) {
+  if (r.category === "image") {
+    const src = `${ENGINE_BASE}/api/thumbnail?path=${encodeURIComponent(r.path)}`;
+    return `<img class="result-thumb" src="${src}" alt="" loading="lazy" onerror="this.remove()">`;
+  }
+  if (r.snippet) {
+    return `<pre class="result-snippet">${escapeHtml(r.snippet)}</pre>`;
+  }
+  return "";
 }
 
 function renderEmpty() {
@@ -169,21 +205,38 @@ async function revealInOs(path) {
 
 // ---------- Index status monitor ----------
 
+// pollStatus runs on its own 4s timer independent of anything the user just
+// did — without this, an error message shown by search()/handleImageFile()
+// (the only way to actually read a real error, since there's no dev tools
+// on this native window) could get silently overwritten by the very next
+// poll tick, sometimes under a second later depending on where that timer
+// happened to be. errorUntil holds the ticker on the error text for a fixed
+// window so it's actually readable (and copyable — see the Edit menu in
+// DeepScanWindow.swift) before status updates resume.
+let errorUntil = 0;
+
 async function pollStatus() {
   try {
     const res = await fetch(`${ENGINE_BASE}/api/status`);
     if (!res.ok) throw new Error(String(res.status));
     const s = await res.json();
     const scanning = s.is_scanning ? " · scanning…" : "";
-    setStatus(s.db_healthy, `${s.total_indexed_files.toLocaleString()} files indexed${scanning}`);
+    if (Date.now() >= errorUntil) {
+      setStatus(s.db_healthy, `${s.total_indexed_files.toLocaleString()} files indexed${scanning}`);
+    }
   } catch (err) {
-    setStatus(false, `engine unreachable: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`);
+    setStatus(false, `engine unreachable: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`, true);
   } finally {
     setTimeout(pollStatus, 4000);
   }
 }
 
-function setStatus(healthy, text) {
+const ERROR_DISPLAY_MS = 6000;
+
+function setStatus(healthy, text, isError = false) {
+  if (isError) {
+    errorUntil = Date.now() + ERROR_DISPLAY_MS;
+  }
   els.statusDot.classList.toggle("is-healthy", !!healthy);
   els.statusText.textContent = text;
 }
