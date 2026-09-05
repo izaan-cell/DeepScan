@@ -77,6 +77,12 @@ jobs:
         with:
           go-version: "1.22"
       - uses: arduino/setup-protoc@v3
+        with:
+          # Authenticates this action's GitHub API calls (fetching the
+          # protoc release) so it gets the higher authenticated rate limit
+          # instead of the shared per-IP unauthenticated one, which was
+          # getting exhausted on GitHub-hosted runner IPs.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build engine + daemon
         shell: bash
