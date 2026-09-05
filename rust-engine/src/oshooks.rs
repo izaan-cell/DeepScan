@@ -12,13 +12,20 @@ use std::process::Command;
 pub fn reveal(path: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        Command::new("open").arg("-R").arg(path).status()?;
+        // .spawn(), not .status() — status() blocks the calling thread
+        // until `open` fully exits, and this runs straight inside an async
+        // HTTP handler with no spawn_blocking wrapper, so it was stalling
+        // the engine's whole tokio runtime (search, status, everything)
+        // for however long Finder took to actually respond, not just the
+        // near-instant fork+exec this only needs. We don't care about the
+        // exit code — reveal-in-Finder is inherently fire-and-forget.
+        Command::new("open").arg("-R").arg(path).spawn()?;
         return Ok(());
     }
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer.exe").arg(format!("/select,{path}")).status()?;
+        Command::new("explorer.exe").arg(format!("/select,{path}")).spawn()?;
         return Ok(());
     }
 
