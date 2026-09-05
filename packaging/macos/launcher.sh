@@ -7,18 +7,33 @@ set -euo pipefail
 RESOURCES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../Resources" && pwd)"
 export DEEPSCAN_ENV=production
 export DEEPSCAN_MODE=local
+# Point directly at the bundled, read-only models instead of copying
+# ~275MB into ~/.deepscan on first launch.
+export DEEPSCAN_MODEL_DIR="$RESOURCES/models"
+
+fail() {
+  osascript -e "display alert \"DeepScan couldn't start\" message \"$1\" as critical"
+  exit 1
+}
+
+"$RESOURCES/bin/deepscan-engine" > "$HOME/.deepscan-launch.log" 2>&1 &
+ENGINE_PID=$!
 
 # The engine writes ~/.deepscan/engine.lock once it's up; the daemon and
 # this script both read it rather than assuming a fixed port.
-"$RESOURCES/bin/deepscan-engine" &
-ENGINE_PID=$!
-
-# Give the engine a moment to bind and publish engine.lock before the
-# daemon and parser bridge try to connect to it.
 for _ in $(seq 1 30); do
   [ -f "$HOME/.deepscan/engine.lock" ] && break
+  # If the engine already exited, waiting for its lockfile is pointless —
+  # bail with a real error instead of silently opening a dead browser tab.
+  if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+    fail "The DeepScan engine exited immediately on startup. Log: ~/.deepscan-launch.log"
+  fi
   sleep 0.5
 done
+
+if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+  fail "The DeepScan engine exited on startup. Log: ~/.deepscan-launch.log"
+fi
 
 "$RESOURCES/bin/deepscan-daemon" &
 DAEMON_PID=$!
@@ -31,8 +46,10 @@ if [ -x "$RESOURCES/jre/bin/java" ] && [ -f "$RESOURCES/lib/deepscan-parser.jar"
   PARSER_PID=$!
 fi
 
-HTTP_PORT="$(python3 -c "import json;print(json.load(open('$HOME/.deepscan/engine.lock'))['port'])" 2>/dev/null || echo 51424)"
-open "http://127.0.0.1:${HTTP_PORT}"
+# DEEPSCAN_ENGINE_HTTP_PORT isn't set here, so this matches config.rs's own
+# default (51424) exactly — engine.lock only records the gRPC port, not
+# this one, so reading HTTP_PORT from it would grab the wrong value.
+open "http://127.0.0.1:51424"
 
 cleanup() {
   kill "$ENGINE_PID" "$DAEMON_PID" "${PARSER_PID:-}" 2>/dev/null || true

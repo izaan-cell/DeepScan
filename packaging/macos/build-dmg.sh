@@ -31,6 +31,11 @@ cp -R "$REPO_ROOT/frontend" "$APP/Contents/Resources/frontend"
 cp "$REPO_ROOT/packaging/macos/launcher.sh" "$APP/Contents/MacOS/DeepScan"
 chmod +x "$APP/Contents/MacOS/DeepScan"
 
+echo "==> Fetching ONNX models (~275MB, cached under .model-cache/ across builds)"
+"$REPO_ROOT/packaging/shared/download-models.sh" "$REPO_ROOT/.model-cache"
+mkdir -p "$APP/Contents/Resources/models"
+cp "$REPO_ROOT/.model-cache/"* "$APP/Contents/Resources/models/"
+
 sed "s/__VERSION__/$VERSION/g" "$REPO_ROOT/packaging/macos/Info.plist.template" > "$APP/Contents/Info.plist"
 cp "$REPO_ROOT/packaging/macos/assets/DeepScan.icns" "$APP/Contents/Resources/DeepScan.icns"
 
@@ -64,7 +69,7 @@ RW_DMG="$BUILD_DIR/DeepScan-rw.dmg"
 rm -f "$RW_DMG"
 
 echo "==> Creating writable dmg to lay out the Finder window"
-hdiutil create -volname "$VOL_NAME" -srcfolder "$STAGING" -ov -format UDRW -size 300m "$RW_DMG"
+hdiutil create -volname "$VOL_NAME" -srcfolder "$STAGING" -ov -format UDRW -size 700m "$RW_DMG"
 
 MOUNT_DIR="/Volumes/$VOL_NAME"
 hdiutil attach "$RW_DMG" -mountpoint "$MOUNT_DIR" -nobrowse -noautoopen
@@ -85,15 +90,22 @@ tell application "Finder"
     set background picture of viewOptions to file ".background:background.png"
     set position of item "DeepScan.app" of container window to {150, 190}
     set position of item "Applications" of container window to {450, 190}
-    close
-    open
     update without registering applications
     delay 1
+    close
   end tell
 end tell
 EOF
 
-hdiutil detach "$MOUNT_DIR"
+# Finder can hold the volume open briefly after the AppleScript closes its
+# window — retry with a short backoff before forcing detach.
+for _ in 1 2 3 4 5; do
+  if hdiutil detach "$MOUNT_DIR" 2>/dev/null; then
+    break
+  fi
+  sleep 2
+done
+hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || true
 
 echo "==> Compressing final .dmg"
 rm -f "$REPO_ROOT/dist/DeepScan.dmg"

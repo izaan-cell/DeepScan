@@ -98,6 +98,7 @@ jobs:
           cp go-daemon/deepscan-daemon.exe stage/bin/
           cp -r frontend stage/frontend
           cp packaging/windows/launcher.ps1 stage/
+          packaging/shared/download-models.sh stage/models
 
       # Pinned to 5.0.2: WiX v6/v7 introduced an "Open Source Maintenance
       # Fee" EULA that must be accepted interactively, which breaks an

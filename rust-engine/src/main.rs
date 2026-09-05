@@ -51,8 +51,8 @@ async fn main() -> anyhow::Result<()> {
         Mode::Local => {
             std::fs::create_dir_all(&cfg.data_dir)?;
 
-            info!("loading ONNX models (CLIP, MiniLM, Jina-Code)...");
-            let models = models::ModelBundle::load(&cfg.data_dir)?;
+            info!("loading ONNX models (CLIP, MiniLM, Jina-Code) from {:?}", cfg.model_dir);
+            let models = models::ModelBundle::load(&cfg.model_dir)?;
 
             let db_path = cfg.data_dir.join("lancedb");
             info!("opening LanceDB at {:?}", db_path);

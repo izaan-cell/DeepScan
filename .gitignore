@@ -29,6 +29,10 @@ parser.lock
 # what the Releases page is for, not git history.
 dist/
 
+# Downloaded ONNX models cached across local packaging builds (fetched
+# fresh by CI each run instead) — several hundred MB, never committed.
+.model-cache/
+
 # OS
 .DS_Store
 Thumbs.db

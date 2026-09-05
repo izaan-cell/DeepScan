@@ -29,9 +29,7 @@ pub struct ModelBundle {
 }
 
 impl ModelBundle {
-    pub fn load(data_dir: &Path) -> Result<Self> {
-        let model_dir = data_dir.join("models");
-
+    pub fn load(model_dir: &Path) -> Result<Self> {
         let load_session = |file: &str| -> Result<Session> {
             let path = model_dir.join(file);
             Session::builder()?

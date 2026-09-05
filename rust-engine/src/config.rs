@@ -24,6 +24,12 @@ pub enum Mode {
 pub struct Config {
     pub mode: Mode,
     pub data_dir: PathBuf,
+    /// Where the ONNX models + tokenizers live. Defaults to
+    /// `data_dir/models`, but a packaged app overrides this to point
+    /// directly at its bundled, read-only Resources/models — avoiding a
+    /// several-hundred-MB copy into the user's writable data dir on first
+    /// launch (see packaging/macos/launcher.sh, packaging/windows/launcher.ps1).
+    pub model_dir: PathBuf,
     pub engine_grpc_port: Option<u16>, // None => ephemeral (production default)
     pub http_bind_host: [u8; 4],
     pub http_port: u16,
@@ -54,6 +60,10 @@ impl Config {
             &std::env::var("DEEPSCAN_DATA_DIR").unwrap_or_else(|_| "~/.deepscan".into()),
         );
 
+        let model_dir = std::env::var("DEEPSCAN_MODEL_DIR")
+            .map(|p| expand_home(&p))
+            .unwrap_or_else(|_| data_dir.join("models"));
+
         let http_port = render_port
             .or_else(|| std::env::var("DEEPSCAN_ENGINE_HTTP_PORT").ok().and_then(|p| p.parse().ok()))
             .unwrap_or(51424);
@@ -61,6 +71,7 @@ impl Config {
         Self {
             mode,
             data_dir,
+            model_dir,
             engine_grpc_port: std::env::var("DEEPSCAN_ENGINE_GRPC_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok()),
