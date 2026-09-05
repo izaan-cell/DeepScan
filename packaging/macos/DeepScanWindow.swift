@@ -51,7 +51,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDe
         NSApp.activate(ignoringOtherApps: true)
 
         setupMenu()
+        requestFolderAccess()
         loadApp()
+    }
+
+    // macOS only shows the "DeepScan would like to access files in your
+    // Desktop folder" consent dialog the first time a *foreground, visible*
+    // process belonging to this app actually touches one of these
+    // protected folders — a background helper (the Go daemon/Rust engine,
+    // spawned headless by launcher.sh) reading the same folder gets
+    // silently denied with no dialog at all, which is what was actually
+    // happening: every real scan of Desktop/Documents/Downloads failed
+    // quietly with "operation not permitted", and there was never a prompt
+    // to say yes to. Doing one deliberate read from here — the actual
+    // NSApplication the user sees and has just brought to the front — is
+    // what gets TCC to attribute the request correctly and ask.
+    func requestFolderAccess() {
+        let fm = FileManager.default
+        for folder in ["Desktop", "Documents", "Downloads"] {
+            let path = (NSHomeDirectory() as NSString).appendingPathComponent(folder)
+            DispatchQueue.global(qos: .utility).async {
+                _ = try? fm.contentsOfDirectory(atPath: path)
+            }
+        }
     }
 
     // A minimal main menu so standard shortcuts actually work — without

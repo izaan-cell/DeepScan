@@ -12,6 +12,15 @@
 <body>
 
   <header class="masthead">
+    <div class="edit-menu" id="editMenu">
+      <button class="edit-menu-toggle" id="editMenuToggle" aria-haspopup="true" aria-expanded="false">Edit ▾</button>
+      <div class="edit-menu-list" id="editMenuList" hidden>
+        <button data-edit-action="cut">Cut</button>
+        <button data-edit-action="copy">Copy</button>
+        <button data-edit-action="paste">Paste</button>
+        <button data-edit-action="selectAll">Select All</button>
+      </div>
+    </div>
     <div class="wordmark">
       <img class="glyph" src="assets/logo.png" alt="" aria-hidden="true">
       <h1>DeepScan</h1>

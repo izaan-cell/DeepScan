@@ -18,22 +18,78 @@ html, body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--serif);
+  height: 100%;
 }
 
+/* The native window is usually taller than a short/empty results state, so
+   without this the whole page sits pinned to the top with a large dead gap
+   below it. Centering vertically only pulls content down when there's room
+   to spare — once real results make the page taller than the window,
+   flexbox just renders from the natural top and the window scrolls, same
+   as before. */
 body {
   max-width: 840px;
   margin: 0 auto;
   padding: 64px 32px 96px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 /* ---------- Masthead ---------- */
 
 .masthead {
+  position: relative;
   text-align: center;
   border-bottom: 1px solid var(--rule-strong);
   padding-bottom: 28px;
   margin-bottom: 40px;
 }
+
+.edit-menu {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.edit-menu-toggle {
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  background: none;
+  border: 1px solid var(--rule-strong);
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.edit-menu-toggle:hover { background: var(--ink); color: var(--paper); }
+
+.edit-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 4px 4px 0 var(--rule);
+  z-index: 10;
+}
+
+.edit-menu-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.edit-menu-list button:hover { background: var(--gray-soft); }
 
 .wordmark {
   display: flex;

@@ -24,5 +24,11 @@
   <true/>
   <key>LSUIElement</key>
   <false/>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>DeepScan indexes files here so you can search them by name, content, or a similar-looking image — nothing ever leaves this machine.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>DeepScan indexes files here so you can search them by name, content, or a similar-looking image — nothing ever leaves this machine.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>DeepScan indexes files here so you can search them by name, content, or a similar-looking image — nothing ever leaves this machine.</string>
 </dict>
 </plist>

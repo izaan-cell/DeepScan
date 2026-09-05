@@ -38,7 +38,83 @@ const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
   resultsCanvas: document.getElementById("resultsCanvas"),
+  editMenu: document.getElementById("editMenu"),
+  editMenuToggle: document.getElementById("editMenuToggle"),
+  editMenuList: document.getElementById("editMenuList"),
 };
+
+// ---------- Visible Edit menu (Cut/Copy/Paste/Select All) ----------
+//
+// The native window's own Cmd+C/V/X/A and right-click menu already work
+// (see DeepScanWindow.swift's Edit menu), but that's easy to miss on a
+// window with no visible menu bar of its own — this gives the same
+// actions a button people can actually see and click. The query textarea
+// is the only editable field in the app, so these all operate on it
+// directly rather than relying on document.execCommand, which loses the
+// textarea's selection the instant focus moves to the toggle button.
+let savedSelection = { start: 0, end: 0 };
+els.queryInput.addEventListener("blur", () => {
+  savedSelection = { start: els.queryInput.selectionStart, end: els.queryInput.selectionEnd };
+});
+
+els.editMenuToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const isOpen = !els.editMenuList.hidden;
+  els.editMenuList.hidden = isOpen;
+  els.editMenuToggle.setAttribute("aria-expanded", String(!isOpen));
+});
+
+document.addEventListener("click", (e) => {
+  if (!els.editMenu.contains(e.target)) {
+    els.editMenuList.hidden = true;
+    els.editMenuToggle.setAttribute("aria-expanded", "false");
+  }
+});
+
+els.editMenuList.addEventListener("click", async (e) => {
+  const action = e.target.dataset.editAction;
+  if (!action) return;
+  els.editMenuList.hidden = true;
+  els.editMenuToggle.setAttribute("aria-expanded", "false");
+  try {
+    await runEditAction(action);
+  } catch (err) {
+    console.error("[DeepScan] edit action failed:", err);
+    setStatus(false, `${action} failed: ${err.name || "Error"}: ${err.message || err}`, true);
+  }
+});
+
+async function runEditAction(action) {
+  const { start, end } = savedSelection;
+  const value = els.queryInput.value;
+
+  if (action === "selectAll") {
+    els.queryInput.focus();
+    els.queryInput.select();
+    return;
+  }
+
+  if (action === "copy" || action === "cut") {
+    const text = start === end ? value : value.slice(start, end);
+    await navigator.clipboard.writeText(text);
+    if (action === "cut" && start !== end) {
+      els.queryInput.value = value.slice(0, start) + value.slice(end);
+      els.queryInput.focus();
+      els.queryInput.setSelectionRange(start, start);
+      els.queryInput.dispatchEvent(new Event("input"));
+    }
+    return;
+  }
+
+  if (action === "paste") {
+    const text = await navigator.clipboard.readText();
+    els.queryInput.value = value.slice(0, start) + text + value.slice(end);
+    els.queryInput.focus();
+    const pos = start + text.length;
+    els.queryInput.setSelectionRange(pos, pos);
+    els.queryInput.dispatchEvent(new Event("input"));
+  }
+}
 
 // ---------- Scope selector ----------
 
