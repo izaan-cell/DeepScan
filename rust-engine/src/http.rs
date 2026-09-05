@@ -47,6 +47,24 @@ pub async fn serve(engine_state: Option<Arc<EngineState>>, mode: Mode, addr: Soc
 }
 
 fn frontend_dir() -> PathBuf {
+    // Packaged app: the binary lives at Contents/Resources/bin/deepscan-engine
+    // (macOS) or stage/bin/deepscan-engine.exe (Windows), with frontend/ as a
+    // sibling of bin/ either way — resolve relative to the executable's own
+    // location, not the current working directory. A GUI-launched app's CWD
+    // is unrelated to its bundle location (typically "/" or the user's home
+    // dir on macOS), so a CWD-relative path only ever worked under `cargo
+    // run`, never for an actually-launched packaged app.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            let bundled = bin_dir.join("../frontend");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    // Dev fallback: relative to CWD (cargo run from the repo root or from
+    // inside rust-engine/).
     let candidate = PathBuf::from("frontend");
     if candidate.exists() {
         return candidate;
