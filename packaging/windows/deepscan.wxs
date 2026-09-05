@@ -13,7 +13,7 @@
     stage/lib/deepscan-parser.jar   (optional — only if java-parser was built)
     stage/jre/**                    (optional — only if a JRE was bundled)
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package
       Name="DeepScan"
       Manufacturer="DeepScan"
@@ -26,9 +26,16 @@
     <!-- Standard Windows installer wizard: Welcome -> License -> Choose
          Install Directory -> Progress -> Finish, same shape as any normal
          desktop app's MSI. Requires `wix build ... -ext
-         WixToolset.UI.wixext` (see .github/workflows/release.yml). -->
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
-    <UIRef Id="WixUI_InstallDir" />
+         WixToolset.UI.wixext` (see .github/workflows/release.yml).
+
+         The old WiX v3-style pattern — a bare <UIRef Id="WixUI_InstallDir"/>
+         plus a separate <Property Id="WIXUI_INSTALLDIR"> — kept failing
+         with WIX0094 "WixUI:WixUI_InstallDir is inaccessible due to its
+         protection level" no matter which extension version was pinned.
+         WiX v5's UI extension actually expects this dedicated namespaced
+         element instead; the dialog set + install-directory binding are
+         one declaration, not two loosely-connected ones. -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="packaging\windows\license.rtf" />
 
     <Feature Id="Main" Title="DeepScan" Level="1">
