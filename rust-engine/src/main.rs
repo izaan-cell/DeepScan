@@ -51,6 +51,13 @@ async fn main() -> anyhow::Result<()> {
         Mode::Local => {
             std::fs::create_dir_all(&cfg.data_dir)?;
 
+            // Defense in depth alongside packaging/macos/launcher.sh's own
+            // pre-launch delete: any caller that waits on engine.lock's
+            // existence (the Go daemon's start sequence, a dev script) must
+            // never observe a lock file left over from a previous process,
+            // whose port is almost certainly dead by now.
+            let _ = std::fs::remove_file(cfg.data_dir.join("engine.lock"));
+
             info!("loading ONNX models (CLIP, MiniLM, Jina-Code) from {:?}", cfg.model_dir);
             let models = models::ModelBundle::load(&cfg.model_dir)?;
 

@@ -17,6 +17,15 @@ fail() {
   exit 1
 }
 
+# A stale engine.lock left over from the previous run (pkill -9 or a crash
+# never gives the old process a chance to clean it up) makes the "wait for
+# engine.lock to exist" loop below race ahead of this new engine actually
+# binding its port — the daemon then reads the OLD process's port from the
+# old file and connects to a dead socket forever. Deleting it first makes
+# the file's existence mean what the wait loop assumes it means: THIS
+# engine is up and its (possibly different, ephemeral) port is published.
+rm -f "$HOME/.deepscan/engine.lock"
+
 "$RESOURCES/bin/deepscan-engine" > "$HOME/.deepscan-launch.log" 2>&1 &
 ENGINE_PID=$!
 
@@ -36,7 +45,7 @@ if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
   fail "The DeepScan engine exited on startup. Log: ~/.deepscan-launch.log"
 fi
 
-"$RESOURCES/bin/deepscan-daemon" &
+"$RESOURCES/bin/deepscan-daemon" > "$HOME/.deepscan-daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 # Optional: only start the Tika document-parsing bridge if a JRE is
