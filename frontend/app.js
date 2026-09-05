@@ -121,7 +121,10 @@ async function search(payload) {
     renderResults(data.results ?? []);
   } catch (err) {
     console.error("[DeepScan] search failed:", err);
-    setStatus(false, "search failed — is the DeepScan engine running?");
+    // Show the real underlying error on-screen, not just a generic
+    // message — there's no way to open dev tools quickly on this native
+    // window, so this is the only way to actually see what broke.
+    setStatus(false, `search failed: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`);
   }
 }
 
@@ -173,8 +176,8 @@ async function pollStatus() {
     const s = await res.json();
     const scanning = s.is_scanning ? " · scanning…" : "";
     setStatus(s.db_healthy, `${s.total_indexed_files.toLocaleString()} files indexed${scanning}`);
-  } catch {
-    setStatus(false, "engine unreachable — start the DeepScan daemon");
+  } catch (err) {
+    setStatus(false, `engine unreachable: ${err.name || "Error"}: ${err.message || err} (base="${ENGINE_BASE}")`);
   } finally {
     setTimeout(pollStatus, 4000);
   }

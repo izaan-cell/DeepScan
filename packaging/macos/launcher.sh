@@ -1,7 +1,8 @@
 #!/bin/bash
 # DeepScan.app's CFBundleExecutable. Starts the local engine + daemon
-# (bundled under Contents/Resources by build-dmg.sh) and opens the UI in
-# the user's default browser — see docs/ARCHITECTURE.md.
+# (bundled under Contents/Resources by build-dmg.sh) and opens the UI in a
+# native window (Contents/Resources/bin/DeepScanWindow, a small Cocoa +
+# WKWebView app compiled at build time) — see docs/ARCHITECTURE.md.
 set -euo pipefail
 
 RESOURCES="$(cd "$(dirname "${BASH_SOURCE[0]}")/../Resources" && pwd)"
@@ -49,25 +50,16 @@ fi
 # DEEPSCAN_ENGINE_HTTP_PORT isn't set here, so this matches config.rs's own
 # default (51424) exactly — engine.lock only records the gRPC port, not
 # this one, so reading HTTP_PORT from it would grab the wrong value.
-#
-# Chrome's --app= mode opens a standalone window with no address bar/tabs
-# instead of a normal browser tab, so DeepScan feels like its own app. A
-# dedicated --user-data-dir keeps this profile separate from the user's
-# regular Chrome session. Falls back to the default browser (a normal tab)
-# if Chrome isn't installed.
-CHROME_APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-if [ -x "$CHROME_APP" ]; then
-  "$CHROME_APP" \
-    --app="http://127.0.0.1:51424" \
-    --user-data-dir="$HOME/.deepscan/chrome-app-profile" \
-    > /dev/null 2>&1 &
-else
-  open "http://127.0.0.1:51424"
-fi
+export DEEPSCAN_URL="http://127.0.0.1:51424"
 
 cleanup() {
   kill "$ENGINE_PID" "$DAEMON_PID" "${PARSER_PID:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-wait "$ENGINE_PID"
+# A real native window (Cocoa + WKWebView, compiled by build-dmg.sh) — not
+# a browser with its UI stripped down. Closing this window is what the
+# user experiences as "quitting DeepScan", so it runs in the foreground;
+# quitting it triggers the cleanup trap above, stopping the engine/daemon
+# with it rather than leaving them running invisibly.
+"$RESOURCES/bin/DeepScanWindow"

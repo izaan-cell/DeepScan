@@ -112,9 +112,14 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
 struct SearchRequestBody {
     text_query: Option<String>,
     image_query_bytes: Option<Vec<u8>>,
+    // The frontend sends a single scope string (e.g. "all", "code"), not
+    // an array — this was previously typed as Vec<String>, which made
+    // every real search from the actual UI fail JSON deserialization
+    // (422 Unprocessable Entity) despite curl tests without a `scope`
+    // field always succeeding and masking the bug.
     #[serde(default)]
     #[allow(dead_code)] // scope filtering happens client-side today; kept for API stability
-    scope: Vec<String>,
+    scope: Option<String>,
 }
 
 #[derive(Serialize)]

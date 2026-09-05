@@ -28,6 +28,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$APP/Contents/Reso
 cp "$REPO_ROOT/rust-engine/target/release/deepscan-engine" "$APP/Contents/Resources/bin/"
 cp "$REPO_ROOT/go-daemon/deepscan-daemon" "$APP/Contents/Resources/bin/"
 cp -R "$REPO_ROOT/frontend" "$APP/Contents/Resources/frontend"
+
+echo "==> Compiling native window (Swift + WKWebView)"
+swiftc "$REPO_ROOT/packaging/macos/DeepScanWindow.swift" \
+  -o "$APP/Contents/Resources/bin/DeepScanWindow" \
+  -framework Cocoa -framework WebKit
+
 cp "$REPO_ROOT/packaging/macos/launcher.sh" "$APP/Contents/MacOS/DeepScan"
 chmod +x "$APP/Contents/MacOS/DeepScan"
 
