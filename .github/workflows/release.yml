@@ -18,6 +18,7 @@ jobs:
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
+      changelog: ${{ steps.bump.outputs.changelog }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +32,26 @@ jobs:
           echo "$new" > VERSION
           echo "version=$new" >> "$GITHUB_OUTPUT"
           echo "tag=v$new" >> "$GITHUB_OUTPUT"
+
+          # Real changes/bug fixes in this release, not a static file table
+          # GitHub already lists the release assets on their own — every
+          # commit since the last release tag, excluding this workflow's
+          # own version-bump commits. Must run before the tag/commit below,
+          # or `git describe` would just find the tag we're about to create.
+          prev_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
+          if [ -n "$prev_tag" ]; then
+            changelog="$(git log "$prev_tag"..HEAD --no-merges --pretty=format:'- %s' | grep -v '\[skip release\]')"
+          else
+            changelog="$(git log --no-merges --pretty=format:'- %s' | grep -v '\[skip release\]')"
+          fi
+          if [ -z "$changelog" ]; then
+            changelog="- Maintenance release, no user-facing changes."
+          fi
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            echo "$changelog"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -165,12 +186,9 @@ jobs:
           tag_name: ${{ needs.bump-version.outputs.tag }}
           name: DeepScan ${{ needs.bump-version.outputs.version }}
           body: |
-            ## DeepScan ${{ needs.bump-version.outputs.version }}
+            ## What's changed
 
-            | File | Platform |
-            |---|---|
-            | `DeepScan.dmg` | macOS |
-            | `DeepScan.msi` | Windows |
+            ${{ needs.bump-version.outputs.changelog }}
           files: |
             artifacts/DeepScan-dmg/DeepScan.dmg
             artifacts/DeepScan-msi/DeepScan.msi
