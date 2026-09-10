@@ -46,12 +46,25 @@ const els = {
 
 // ---------- Scope selector ----------
 
+// Clicking a chip only updated state.scope, with nothing re-running the
+// search against it — so switching to "Images" after already searching
+// left whatever unfiltered results were already on screen just sitting
+// there looking like they'd matched an "Images"-scoped search that never
+// actually ran. lastQuery remembers the most recent text/image query so
+// changing the filter re-runs it immediately, same as re-sending would.
+let lastQuery = null;
+
 els.scopeSelector.addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
   document.querySelectorAll(".chip").forEach((c) => c.classList.remove("is-active"));
   chip.classList.add("is-active");
   state.scope = chip.dataset.scope;
+  if (lastQuery?.type === "text") {
+    runTextSearch(lastQuery.text);
+  } else if (lastQuery?.type === "image") {
+    runImageSearch(lastQuery.bytes, lastQuery.label);
+  }
 });
 
 // ---------- Text / code query ----------
@@ -64,6 +77,7 @@ els.queryInput.addEventListener("input", () => {
   const hasText = !!els.queryInput.value.trim();
   els.sendButton.hidden = !hasText;
   if (!hasText) {
+    lastQuery = null;
     renderEmpty();
   }
 });
@@ -79,6 +93,7 @@ function autoGrow(textarea) {
 }
 
 async function runTextSearch(text) {
+  lastQuery = { type: "text", text };
   await search({ text_query: text, scope: state.scope }, text);
 }
 
@@ -115,6 +130,7 @@ els.fileInput.addEventListener("change", () => {
 els.clearImageButton.addEventListener("click", (e) => {
   e.stopPropagation();
   clearImagePreview();
+  lastQuery = null;
   renderEmpty();
 });
 
@@ -159,12 +175,20 @@ async function handleImageFile(file) {
       throw new Error(`"${file.name}" is too large to search by (${Math.round(file.size / 1024 / 1024)}MB)`);
     }
     showImagePreview(file);
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    await search({ image_query_bytes: Array.from(bytes), scope: state.scope }, file.name);
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    await runImageSearch(bytes, file.name);
   } catch (err) {
     console.error("[DeepScan] image query failed:", err);
     setStatus(false, `image query failed: ${err.name || "Error"}: ${err.message || err}`, true);
   }
+}
+
+// Split out from handleImageFile so the scope selector can re-run the same
+// query against the already-read bytes when the filter changes, without
+// needing the original File object (or to prompt the user to drop it again).
+async function runImageSearch(bytes, label) {
+  lastQuery = { type: "image", bytes, label };
+  await search({ image_query_bytes: bytes, scope: state.scope }, label);
 }
 
 // ---------- Search + results ----------
