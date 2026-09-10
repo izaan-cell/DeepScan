@@ -56,6 +56,14 @@ fn is_software_project_dir(dir: &Path) -> bool {
     BUNDLE_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) || SKIP_DIR_NAMES.contains(&name.as_ref())
 }
 
+/// True if any ANCESTOR (not the path itself) is a `.app` bundle — used by
+/// the dedicated app-discovery walk in `index_path` to yield a `.app`
+/// entry itself while still refusing to descend into (or index anything
+/// from) its contents.
+fn is_inside_app_bundle(path: &Path) -> bool {
+    path.ancestors().skip(1).any(|a| a.extension().map(|e| e == "app").unwrap_or(false))
+}
+
 pub struct ScoredFile {
     pub path: String,
     pub category: String,
@@ -76,30 +84,31 @@ impl Core {
         Self { state }
     }
 
-    /// A plain text query searches both the document column (MiniLM) and
-    /// the code column (Jina-Code) — matching the "one search bar across
-    /// every file type" design — plus a plain substring match on filename
-    /// and content (db::search_literal), then merges by score. The two
-    /// embedding models produce differently-scaled distances, so semantic
-    /// ranking between them is a reasonable approximation, not a
-    /// calibrated joint score — but a literal match is unambiguous, so
-    /// those always outrank a semantic-only hit regardless of its score.
-    /// This is also the only way an image ever matches a typed query at
-    /// all: images have no text/code vector, only clip_vector, so without
-    /// the filename half of this, typing an image's name found nothing.
+    /// A plain text query searches the document column (MiniLM), the code
+    /// column (Jina-Code), and — via CLIP's text encoder, sharing CLIP's
+    /// image encoder's embedding space — the image column, so describing a
+    /// photo in words ("a mountain at sunset") actually matches it instead
+    /// of only ever matching by literal filename. Also runs a plain
+    /// substring match on filename and content (db::search_literal), then
+    /// merges by score. The embedding models produce differently-scaled
+    /// distances, so semantic ranking between them is a reasonable
+    /// approximation, not a calibrated joint score — but a literal match is
+    /// unambiguous, so those always outrank a semantic-only hit regardless
+    /// of its score.
     pub async fn search_text(&self, query: &str, top_k: usize) -> anyhow::Result<Vec<ScoredFile>> {
-        let (text_vector, code_vector) = {
+        let (text_vector, code_vector, clip_vector) = {
             let mut models = self.state.models.lock().await;
-            (models.embed_text(query)?, models.embed_code(query)?)
+            (models.embed_text(query)?, models.embed_code(query)?, models.embed_text_clip(query)?)
         };
-        let (text_rows, code_rows, literal_rows) = tokio::try_join!(
+        let (text_rows, code_rows, clip_rows, literal_rows) = tokio::try_join!(
             self.state.db.search_text(text_vector, top_k),
             self.state.db.search_code(code_vector, top_k),
+            self.state.db.search_clip(clip_vector, top_k),
             self.state.db.search_literal(query, top_k),
         )?;
 
         let mut by_path: std::collections::HashMap<String, ScoredFile> = std::collections::HashMap::new();
-        for row in text_rows.into_iter().chain(code_rows) {
+        for row in text_rows.into_iter().chain(code_rows).chain(clip_rows) {
             let file = to_scored_file(row);
             by_path.entry(file.path.clone()).and_modify(|e| e.score = e.score.max(file.score)).or_insert(file);
         }
@@ -242,14 +251,56 @@ impl Core {
         self.state.db.delete_path(path).await
     }
 
+    /// Indexes a `.app` bundle itself as one opaque entry — never its
+    /// contents (those are executables/plist metadata, not user files; see
+    /// `BUNDLE_EXTENSIONS`). The bundle's display name is embedded through
+    /// the same MiniLM `text_vector` a document search already looks at,
+    /// so typing an app's name finds and reveals it with no new search-side
+    /// code at all. Without this, `.app` paths were excluded from indexing
+    /// entirely — dropped/typed app names simply never matched anything.
+    pub async fn index_application(&self, path: &Path) -> anyhow::Result<()> {
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.is_empty() {
+            return Ok(());
+        }
+
+        self.state.db.delete_path(&path.to_string_lossy()).await?;
+
+        let modified_unix_ms = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let vector = {
+            let mut models = self.state.models.lock().await;
+            models.embed_text(&name)?
+        };
+
+        let row = FileRow {
+            path: path.to_string_lossy().into_owned(),
+            category: "application".into(),
+            modified_unix_ms,
+            snippet: Some(name),
+            clip_vector: None,
+            text_vector: Some(vector),
+            code_vector: None,
+        };
+        self.state.db.insert_rows(vec![row]).await
+    }
+
     /// Reads a file's bytes for the result-card preview (thumbnail image,
     /// or the same snippet text search already surfaces) — but only for a
     /// path DeepScan itself indexed. See db::VectorStore::is_indexed_path
     /// for why: this is the one HTTP endpoint that returns raw file
     /// contents, so it must never become "read any path a caller names".
     pub async fn read_indexed_file(&self, path: &str) -> anyhow::Result<Option<Vec<u8>>> {
-        if self.state.db.is_indexed_path(path).await?.is_none() {
+        let Some(category) = self.state.db.is_indexed_path(path).await? else {
             return Ok(None);
+        };
+        if category == "application" {
+            return crate::appicon::extract_icon_png(Path::new(path)).map(Some);
         }
         Ok(Some(tokio::fs::read(path).await?))
     }
@@ -432,6 +483,38 @@ impl IndexService for IndexSvc {
                     Err(_) => files_skipped += 1,
                 }
 
+                let progress = IndexProgress {
+                    files_scanned,
+                    files_indexed,
+                    files_skipped,
+                    current_path: path.to_string_lossy().into_owned(),
+                    done: false,
+                };
+                if tx.send(Ok(progress)).await.is_err() {
+                    return;
+                }
+            }
+
+            // Separate pass for .app bundles: the main walk above prunes
+            // them via is_software_project_dir (never yielding them at
+            // all, by design — `ignore`'s filter_entry has no "yield this
+            // entry but don't descend into it" mode), so this is the only
+            // way one ever actually gets indexed as itself.
+            let mut app_walk = ignore::WalkBuilder::new(&req.root_path);
+            app_walk.filter_entry(|entry| entry.depth() == 0 || !is_inside_app_bundle(entry.path()));
+            for entry in app_walk.build() {
+                let Ok(entry) = entry else { continue };
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let is_app = entry.path().extension().map(|e| e == "app").unwrap_or(false);
+                if !is_dir || !is_app {
+                    continue;
+                }
+                files_scanned += 1;
+                let path = entry.path().to_path_buf();
+                match core.index_application(&path).await {
+                    Ok(()) => files_indexed += 1,
+                    Err(_) => files_skipped += 1,
+                }
                 let progress = IndexProgress {
                     files_scanned,
                     files_indexed,

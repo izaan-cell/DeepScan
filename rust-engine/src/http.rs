@@ -127,7 +127,6 @@ struct SearchRequestBody {
     // (422 Unprocessable Entity) despite curl tests without a `scope`
     // field always succeeding and masking the bug.
     #[serde(default)]
-    #[allow(dead_code)] // scope filtering happens client-side today; kept for API stability
     scope: Option<String>,
 }
 
@@ -156,22 +155,38 @@ async fn search(State(state): State<AppState>, Json(body): Json<SearchRequestBod
             .into_response();
     };
 
+    // The scope chips (All Files/Images/Code/Documents/Audio/Video) were
+    // pure decoration until now — this field was received and then
+    // explicitly discarded (`#[allow(dead_code)]`) instead of ever being
+    // applied. Over-fetch so filtering down to one category still leaves
+    // a full page of results rather than whatever survived an unfiltered
+    // top-20 cut.
+    let want_filter = body.scope.as_deref().is_some_and(|s| !s.is_empty() && s != "all");
+    let fetch_k = if want_filter { 100 } else { 20 };
+
     let result = if let Some(text) = body.text_query.filter(|t| !t.is_empty()) {
-        core.search_text(&text, 20).await
+        core.search_text(&text, fetch_k).await
     } else if let Some(bytes) = body.image_query_bytes.filter(|b| !b.is_empty()) {
-        core.search_image(&bytes, 20).await
+        core.search_image(&bytes, fetch_k).await
     } else {
         return (StatusCode::BAD_REQUEST, "provide text_query or image_query_bytes").into_response();
     };
 
     match result {
-        Ok(results) => Json(SearchResponseDto {
-            results: results
+        Ok(results) => {
+            let mut results: Vec<_> = results
                 .into_iter()
-                .map(|r| SearchResultDto { path: r.path, category: r.category, snippet: r.snippet, score: r.score })
-                .collect(),
-        })
-        .into_response(),
+                .filter(|r| !want_filter || Some(r.category.as_str()) == body.scope.as_deref())
+                .collect();
+            results.truncate(20);
+            Json(SearchResponseDto {
+                results: results
+                    .into_iter()
+                    .map(|r| SearchResultDto { path: r.path, category: r.category, snippet: r.snippet, score: r.score })
+                    .collect(),
+            })
+            .into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -214,8 +229,13 @@ async fn thumbnail(State(state): State<AppState>, Query(q): Query<ThumbnailQuery
         _ => {}
     }
 
+    // A `.app` bundle's own extension obviously isn't an image format —
+    // read_indexed_file already converts its icon to PNG for exactly this
+    // case (see appicon.rs), so the response here always really is one.
+    let mime = if q.path.ends_with(".app") { "image/png" } else { mime_for_path(&q.path) };
+
     match core.read_indexed_file(&q.path).await {
-        Ok(Some(bytes)) => ([(header::CONTENT_TYPE, mime_for_path(&q.path))], bytes).into_response(),
+        Ok(Some(bytes)) => ([(header::CONTENT_TYPE, mime)], bytes).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "not an indexed file").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

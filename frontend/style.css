@@ -327,6 +327,14 @@ body {
   background: var(--gray-soft);
 }
 
+/* App icons are already square with their own internal padding — cover
+   would zoom/crop them oddly, so this contains + pads instead, like a
+   Dock icon sitting on a plain tile rather than a cropped photo. */
+.result-card .result-thumb-app {
+  object-fit: contain;
+  padding: 24px;
+}
+
 .result-card .result-snippet {
   display: -webkit-box;
   -webkit-box-orient: vertical;

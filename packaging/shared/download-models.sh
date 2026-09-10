@@ -7,6 +7,9 @@
 # output tensor names, dimensions) — see rust-engine/src/models.rs and the
 # commit that introduced this script for what was checked and why:
 #   - CLIP vision (quantized): pixel_values -> image_embeds[512]
+#   - CLIP text (quantized): input_ids (only, padded/truncated to 77) -> text_embeds[512]
+#     same embedding space as CLIP vision — this is what lets a typed
+#     description actually match an image, not just its filename.
 #   - MiniLM (quantized): input_ids+attention_mask+token_type_ids -> 384-d
 #   - Jina-Code (quantized): input_ids+attention_mask (no token_type_ids) -> 768-d
 #
@@ -30,6 +33,10 @@ fetch() {
 
 fetch "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx" \
   "clip-vit-b32.onnx"
+fetch "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/text_model_quantized.onnx" \
+  "clip-vit-b32-text.onnx"
+fetch "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/tokenizer.json" \
+  "clip.tokenizer.json"
 
 fetch "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx" \
   "all-MiniLM-L6-v2.onnx"

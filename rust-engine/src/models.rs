@@ -20,8 +20,20 @@ const CLIP_IMAGE_SIZE: u32 = 224;
 const CLIP_MEAN: [f32; 3] = [0.48145466, 0.4578275, 0.40821073];
 const CLIP_STD: [f32; 3] = [0.26862954, 0.26130258, 0.27577711];
 
+// CLIP's trained context length — its own tokenizer.json declares
+// model_max_length: 77 but (unlike MiniLM/Jina-Code's tokenizers) has no
+// built-in truncation/padding config, so input_ids has to be manually
+// padded/truncated to exactly this length. Verified against the actual
+// ONNX export and tokenizer_config.json, not assumed.
+const CLIP_TEXT_SEQ_LEN: usize = 77;
+// CLIP's pad token — verified against tokenizer.json: pad_token and
+// eos_token are both "<|endoftext|>", vocab id 49407.
+const CLIP_PAD_TOKEN_ID: i64 = 49407;
+
 pub struct ModelBundle {
     pub clip: Session,
+    pub clip_text: Session,
+    pub clip_tokenizer: Tokenizer,
     pub minilm: Session,
     pub minilm_tokenizer: Tokenizer,
     pub jina_code: Session,
@@ -52,6 +64,8 @@ impl ModelBundle {
 
         Ok(Self {
             clip: load_session("clip-vit-b32.onnx")?,
+            clip_text: load_session("clip-vit-b32-text.onnx")?,
+            clip_tokenizer: load_tokenizer("clip.tokenizer.json")?,
             minilm: load_session("all-MiniLM-L6-v2.onnx")?,
             minilm_tokenizer: load_tokenizer("all-MiniLM-L6-v2.tokenizer.json")?,
             jina_code: load_session("jina-embeddings-v2-base-code.onnx")?,
@@ -79,6 +93,31 @@ impl ModelBundle {
 
         let input = Value::from_array(tensor)?;
         let outputs = self.clip.run(ort::inputs!["pixel_values" => input]?)?;
+        let embedding = outputs[0].try_extract_tensor::<f32>()?;
+        Ok(normalize(embedding.view().iter().copied().collect()))
+    }
+
+    /// Embed free text -> 512-d CLIP vector, in the *same* embedding space
+    /// as embed_image's output (both are `clip_embeds`/`image_embeds` from
+    /// the same CLIP model, verified against the actual ONNX exports) — so
+    /// this is what actually lets a typed description ("a mountain at
+    /// sunset") match an image's vector at all. Without this, a text query
+    /// only ever had a text_vector/code_vector to compare against, and
+    /// images only ever have a clip_vector: two disjoint spaces that were
+    /// never going to match no matter how well-worded the description was.
+    pub fn embed_text_clip(&mut self, text: &str) -> Result<Vec<f32>> {
+        let encoding = self
+            .clip_tokenizer
+            .encode(text, true)
+            .map_err(|e| anyhow::anyhow!("CLIP tokenization failed: {e}"))?;
+
+        let mut ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
+        ids.truncate(CLIP_TEXT_SEQ_LEN);
+        ids.resize(CLIP_TEXT_SEQ_LEN, CLIP_PAD_TOKEN_ID);
+
+        let ids_arr = CowArray::from(ndarray::Array2::from_shape_vec((1, CLIP_TEXT_SEQ_LEN), ids)?).into_dyn();
+        let input_ids = Value::from_array(&ids_arr)?;
+        let outputs = self.clip_text.run(ort::inputs!["input_ids" => input_ids]?)?;
         let embedding = outputs[0].try_extract_tensor::<f32>()?;
         Ok(normalize(embedding.view().iter().copied().collect()))
     }

@@ -218,11 +218,16 @@ function renderResults(results, queryLabel) {
 // text/code snippet the engine already extracted and returned alongside
 // the search result for everything else.
 function previewHtml(r) {
-  if (r.category === "image") {
+  // "application" reuses the same thumbnail endpoint — http.rs converts
+  // the .app bundle's own .icns icon to PNG server-side rather than
+  // reading the bundle path as a file, since the point here is showing
+  // the actual app icon, not trying to display a directory as an image.
+  if (r.category === "image" || r.category === "application") {
     const src = `${ENGINE_BASE}/api/thumbnail?path=${encodeURIComponent(r.path)}`;
-    return `<img class="result-thumb" src="${src}" alt="" loading="lazy" onerror="this.remove()">`;
+    const cls = r.category === "application" ? "result-thumb result-thumb-app" : "result-thumb";
+    return `<img class="${cls}" src="${src}" alt="" loading="lazy" onerror="this.remove()">`;
   }
-  if (r.snippet) {
+  if (r.category !== "application" && r.snippet) {
     return `<pre class="result-snippet">${escapeHtml(r.snippet)}</pre>`;
   }
   return "";

@@ -1,3 +1,4 @@
+mod appicon;
 mod config;
 mod db;
 mod http;
