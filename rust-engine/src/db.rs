@@ -110,20 +110,50 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Words too common/short to mean anything as a standalone filename or
+    /// content match — without this, "a picture of a chud" would treat "a"
+    /// and "of" as literal-match terms too, matching almost every row in
+    /// the table. The category words (picture/photo/image/video/etc.) are
+    /// here for a more specific reason: they're substrings of the actual
+    /// folder names macOS uses (~/Pictures, ~/Movies), so "picture" alone
+    /// literal-matched every single file under ~/Pictures by path, not
+    /// just ones actually related to the query.
+    const STOPWORDS: &'static [&'static str] = &[
+        "a", "an", "the", "of", "in", "on", "to", "is", "for", "and", "with", "this", "that", "my", "picture",
+        "pictures", "photo", "photos", "image", "images", "video", "videos", "file", "files", "document",
+        "documents",
+    ];
+
     /// Plain substring match against filename and content — semantic
     /// vector search alone can miss an exact fragment the user actually
-    /// typed (a specific variable name, an exact phrase, a filename with
-    /// no meaningful embedding), especially since it's the only way
-    /// images ever match a text query at all (they have no text/code
-    /// vector, only clip_vector, so "type a name and find that image"
-    /// otherwise turns up nothing no matter how exact the name is).
-    /// Matches get a fixed max score — there's no distance metric here — so
-    /// callers should treat them as "definitely relevant", not comparable
-    /// on the same scale as a KNN score.
+    /// typed, especially since it's the only way images ever match a text
+    /// query at all (they have no text/code vector, only clip_vector).
+    /// Matches the full query phrase (score 1.0, since that's about as
+    /// confident as a match gets) *and* any individual significant word in
+    /// it (score 0.9) — without the per-word fallback, describing a photo
+    /// in a full sentence ("a picture of a chud") only ever benefited from
+    /// semantic similarity, even when the exact filename ("chud.png") was
+    /// sitting right there in the query but not as a verbatim substring of
+    /// the whole sentence.
     pub async fn search_literal(&self, query: &str, top_k: usize) -> Result<Vec<ScoredRow>> {
         let table = self.conn.open_table(TABLE).execute().await?;
-        let escaped = query.to_lowercase().replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
-        let filter = format!("LOWER(path) LIKE '%{escaped}%' OR LOWER(snippet) LIKE '%{escaped}%'");
+        let escape = |s: &str| s.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
+        let full = escape(&query.to_lowercase());
+
+        let words: Vec<String> = query
+            .to_lowercase()
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+            .filter(|w| w.len() >= 3 && !Self::STOPWORDS.contains(w))
+            .map(escape)
+            .collect();
+
+        let mut clauses = vec![format!("LOWER(path) LIKE '%{full}%'"), format!("LOWER(snippet) LIKE '%{full}%'")];
+        for w in &words {
+            clauses.push(format!("LOWER(path) LIKE '%{w}%'"));
+            clauses.push(format!("LOWER(snippet) LIKE '%{w}%'"));
+        }
+        let filter = clauses.join(" OR ");
         let mut stream = table.query().only_if(filter).limit(top_k).execute().await?;
 
         let mut rows = Vec::new();
@@ -133,11 +163,14 @@ impl VectorStore {
             let snippets = batch.column_by_name("snippet").and_then(|c| c.as_any().downcast_ref::<StringArray>());
             let (Some(paths), Some(categories)) = (paths, categories) else { continue };
             for i in 0..batch.num_rows() {
+                let path_lower = paths.value(i).to_lowercase();
+                let snippet_lower = snippets.map(|s| s.value(i).to_lowercase()).unwrap_or_default();
+                let is_full_match = path_lower.contains(&query.to_lowercase()) || snippet_lower.contains(&query.to_lowercase());
                 rows.push(ScoredRow {
                     path: paths.value(i).to_string(),
                     category: categories.value(i).to_string(),
                     snippet: snippets.map(|s| s.value(i).to_string()).filter(|s| !s.is_empty()),
-                    score: 1.0,
+                    score: if is_full_match { 1.0 } else { 0.9 },
                 });
             }
         }
