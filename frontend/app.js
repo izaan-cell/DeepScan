@@ -166,9 +166,27 @@ function clearImagePreview() {
   els.fileInput.value = "";
 }
 
+// Dragging an .app out of Finder doesn't hand the browser the app bundle
+// itself — for some apps (system-protected ones especially) Finder hands
+// over a zipped copy instead ("Antigravity.app.zip"), and even a plain
+// ".app" drop is a directory, not an image file either way. There's no
+// path here to look up and extract a real icon from (browsers never
+// expose one for a dropped file, by design), but the app's *name* is
+// right there in the filename — searching by that finds the same app
+// this engine already indexed from /Applications, real icon included.
+function appNameFromDroppedFile(filename) {
+  const m = filename.match(/^(.*?)\.app(?:\.zip)?$/i);
+  return m ? m[1] : null;
+}
+
 async function handleImageFile(file) {
   try {
     if (!file.type.startsWith("image/")) {
+      const appName = appNameFromDroppedFile(file.name);
+      if (appName) {
+        await runTextSearch(appName);
+        return;
+      }
       throw new Error(`"${file.name}" isn't an image DeepScan can search by`);
     }
     if (file.size > MAX_IMAGE_QUERY_BYTES) {
